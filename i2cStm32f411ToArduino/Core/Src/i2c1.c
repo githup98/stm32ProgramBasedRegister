@@ -8,7 +8,7 @@ uint32_t *pI2C1__I2C_SR1 = (uint32_t*)(I2C1_BASE_ADDR + 0x14);
 uint32_t *pI2C1__I2C_SR2 = (uint32_t*)(I2C1_BASE_ADDR + 0x18);
 
 
-void i2c1Config(void)
+void i2c1Config(const char* masterORSlave) //master/slave
 {
 	/* all step -----------------
 	 * configure pin feature
@@ -61,36 +61,57 @@ void i2c1Config(void)
 	uint32_t *pRCC_APB1ENR = (uint32_t*)(RCC_BASE_ADDR + 0x40);
 	*pRCC_APB1ENR |= (1 << I2C1EN__RCC_APB1ENR);
 
-	//Reset i2c lines by software reset
-	*pI2C1__I2C_CR1 |= (1 << SWRST__2C_CR1);
-	*pI2C1__I2C_CR1 &= ~(1 << SWRST__2C_CR1);
+	//Reset i2c lines by software reset (master mode)
+	if(strcmp(masterORSlave, "master") == 0)
+	{
+		*pI2C1__I2C_CR1 |= (1 << SWRST__I2C_CR1);
+		*pI2C1__I2C_CR1 &= ~(1 << SWRST__I2C_CR1);
+
+		//configure clock control register
+		uint32_t *pI2C1__I2C_CCR = (uint32_t*)(I2C1_BASE_ADDR + 0x1C);
+		*pI2C1__I2C_CCR &= (0xf000);   //clear previous value
+		//tSCL = 10us -> tHighSCL = 5us; tAPB1 = 125ns -> tHighSCL = CCR * 125
+		*pI2C1__I2C_CCR |= (0x28 << CCR__I2C_CCR);
+
+		//Configure the rise time register
+		uint32_t *pI2C1__I2C_TRISE = (uint32_t*)(I2C1_BASE_ADDR + 0x20);
+		*pI2C1__I2C_TRISE &= ~(0x3f << TRISE__I2C_TRISE);
+		//1000 / fAPB1 + 1 with 1000 is maximum allowed rised time on SCL in nanoseconds
+		*pI2C1__I2C_TRISE |= (0x09 << TRISE__I2C_TRISE);
+	}
+
 
 	uint32_t *pI2C1__I2C_CR2 = (uint32_t*)(I2C1_BASE_ADDR + 0x04);
 	*pI2C1__I2C_CR2 &=~ (0x1f << FREQ__I2C_CR2); //clear previous value
 	*pI2C1__I2C_CR2 |= (0x08 << FREQ__I2C_CR2);   //APB1 clock = 8
 
-	//configure clock control register
-	uint32_t *pI2C1__I2C_CCR = (uint32_t*)(I2C1_BASE_ADDR + 0x1C);
-	*pI2C1__I2C_CCR &= (0xf000);   //clear previous value
-	//tSCL = 10us -> tHighSCL = 5us; tAPB1 = 125ns -> tHighSCL = CCR * 125
-	*pI2C1__I2C_CCR |= (0x28 << CCR__I2C_CCR);
 
-	//Configure the rise time register
-	uint32_t *pI2C1__I2C_TRISE = (uint32_t*)(I2C1_BASE_ADDR + 0x20);
-	*pI2C1__I2C_TRISE &= ~(0x3f << TRISE__I2C_TRISE);
-	//1000 / fAPB1 + 1 with 1000 is maximum allowed rised time on SCL in nanoseconds
-	*pI2C1__I2C_TRISE |= (0x09 << TRISE__I2C_TRISE);
+	if(strcmp(masterORSlave, "slave") == 0)
+	{
+		//Set address 7-bit mode
+		uint32_t *pI2C1__I2C_OAR1 = (uint32_t*)(I2C1_BASE_ADDR + 0x08);
+		*pI2C1__I2C_OAR1 &= ~ (1 << ADDMODE__I2C_OAR1); //select 7 bit mode
+		*pI2C1__I2C_OAR1 &= ~ (0xfe << ADD_7_1__I2C_OAR1); //clear value
+		*pI2C1__I2C_OAR1 |= (0x0f << ADD_7_1__I2C_OAR1); //address = 0x10
+		HAL_Delay(5);
+	}
 
 	//Program the I2C_CR1 register to enable the peripheral
 	uint32_t *pI2C1__I2C_CR1 = (uint32_t*)(I2C1_BASE_ADDR);
-	*pI2C1__I2C_CR1 |= (1 << PE__2C_CR1);
+	*pI2C1__I2C_CR1 |= (1 << PE__I2C_CR1);
+	if(strcmp(masterORSlave, "slave") == 0)
+	{
+		*pI2C1__I2C_CR1 |= (1 << ACK__I2C_CR1); //ACK bit must be set by programmer after PE bit is set to 1
+	}
 }
+
+
 
 
 void i2c1Start(void)
 {
-	*pI2C1__I2C_CR1  |= (1 << ACK__2C_CR1);
-	*pI2C1__I2C_CR1  |= (1 << START__2C_CR1); //generate start condition
+	*pI2C1__I2C_CR1  |= (1 << ACK__I2C_CR1);
+	*pI2C1__I2C_CR1  |= (1 << START__I2C_CR1); //generate start condition
 	while(!(((*pI2C1__I2C_CR1) >> SB__I2C_SR1) & 0x01)); //wait for SB equal to 1
 }
 
@@ -116,7 +137,7 @@ void i2c1AddressReadOneByte(uint8_t address)
 	////while (!(((I2C1->SR1) >> ADDR__I2C_SR1) & 0x01));
 
 	//change ACK to 0 before clear ADDR bit due to read 1 byte
-	*pI2C1__I2C_CR1  &= ~(1 << ACK__2C_CR1);
+	*pI2C1__I2C_CR1  &= ~(1 << ACK__I2C_CR1);
 
 	//clear ADDR bit
 	uint8_t tmp = *pI2C1__I2C_SR1 | *pI2C1__I2C_SR2;
@@ -131,8 +152,8 @@ void i2c1AddressReadTwoByte(unsigned char address)
 	////while (!(((I2C1->SR1) >> ADDR__I2C_SR1) & 0x01));
 
 	//change ACK to 0 before clear ADDR bit due to read 1 byte
-	*pI2C1__I2C_CR1  &= ~(1 << ACK__2C_CR1);
-	*pI2C1__I2C_CR1 |= (1 << POS__2C_CR1);
+	*pI2C1__I2C_CR1  &= ~(1 << ACK__I2C_CR1);
+	*pI2C1__I2C_CR1 |= (1 << POS__I2C_CR1);
 
 	//clear ADDR bit
 	uint8_t tmp = *pI2C1__I2C_SR1 | *pI2C1__I2C_SR2;
@@ -171,7 +192,7 @@ void i2c1ReadMultiBytes(uint8_t numByteToReads, uint8_t* data) //wait for BTF bi
 		if(count >= numByteToReads - 3)
 		{
 			while(!(((*pI2C1__I2C_SR1) >> BTF__I2C_SR1) & 0x01));
-			*pI2C1__I2C_CR1  &= ~(1 << ACK__2C_CR1);
+			*pI2C1__I2C_CR1  &= ~(1 << ACK__I2C_CR1);
 			data[count] = *pI2C1__I2C_DR;
 
 			while(!(((*pI2C1__I2C_SR1) >> BTF__I2C_SR1) & 0x01));
@@ -267,7 +288,7 @@ void i2c1Write(uint8_t data)
 
 void i2c1Stop(void)
 {
-	*pI2C1__I2C_CR1 |= (1 << STOP__2C_CR1);
+	*pI2C1__I2C_CR1 |= (1 << STOP__I2C_CR1);
 }
 
 
@@ -310,7 +331,48 @@ void i2c1SendData(uint8_t addr, uint8_t data)
 	HAL_Delay(5);
 }
 
+void i2c1SlaveReceiveBytes(uint8_t *data)
+{
+	//HAL_Delay(10);
+	while(!(((*pI2C1__I2C_SR1) >> ADDR__I2C_SR1) & 0x01));
+	uint8_t tmp = (*pI2C1__I2C_SR1 | *pI2C1__I2C_SR2);    //clear ADDR bit
+	HAL_Delay(10);  //this delay help void stuck in while loop
+	uint8_t count = 0;
+	while(!((*pI2C1__I2C_SR1 >> STOPF__I2C_SR1) & 0x01) ) //receive multi byte
+	{
+		//wait for RXEN bit equal to 1
+		while(!((*pI2C1__I2C_SR1 >> RxNE__I2C_SR1) & 0x01) );  //due to preoder of "*" > ">>"
+		data[count] = *pI2C1__I2C_DR;
+		count += 1;
+	}
 
+	//clear STOPF bit by read SR1 and Write CR1
+	count = *pI2C1__I2C_SR1;
+	*pI2C1__I2C_CR1 |= (1 << PE__I2C_CR1);
+}
+
+
+void i2c1SlaveSendBytes(uint8_t* data)
+{
+	while(!(((*pI2C1__I2C_SR1) >> ADDR__I2C_SR1) & 0x01));
+	uint8_t tmp = (*pI2C1__I2C_SR1 | *pI2C1__I2C_SR2);    //clear ADDR bit
+	HAL_Delay(10);  //this delay help void stuck in while loop
+	uint8_t count = 0;
+
+	//while(!(((*pI2C1__I2C_SR1) >> BTF__I2C_SR1) & 0x01));
+	while(!((*pI2C1__I2C_SR1 >> AF__I2C_SR1) & 0x01) )  //due to master will send NACK , so that check AF bit instead of checking STOPF,
+	{
+		while(!(((*pI2C1__I2C_SR1) >> TxE__I2C_SR1) & 0x01));
+		*pI2C1__I2C_DR = data[count];
+		count += 1;
+		if(count > 5)
+		{
+			count = 0;
+		}
+		HAL_Delay(3);
+	}
+	*pI2C1__I2C_SR1 &= ~(1 << AF__I2C_SR1); //clear AF bit
+}
 void enablePinToDebug_portD(void)
 {
 ///////

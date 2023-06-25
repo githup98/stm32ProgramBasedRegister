@@ -39,6 +39,15 @@
 
 
 
+#define GPIOBEN__RCC_AHB1ENR        0x01
+
+
+
+#define RCC_BASE_ADDR 0x40023800
+#define GPIOB_BASE_ADDR 0x40020400
+#define I2C1_BASE_ADDR 0x40005400
+
+
 
 
 /* USER CODE END PD */
@@ -52,7 +61,6 @@
 
 /* USER CODE BEGIN PV */
 
-
 //AHB bus
 
 
@@ -63,6 +71,8 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 /* USER CODE BEGIN PFP */
 
+void blinkk(void);
+void blinkk2(void);
 
 ///////////
 
@@ -103,13 +113,15 @@ int main(void)
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
 
-  enablePinToDebug_portD();
-  uint32_t *GPIOx_ODR = (uint32_t*)(0x40020C00 + 0x14);
-
-	i2c1Config();
-	HAL_Delay(500);
+  //enablePinToDebug_portD();
 
 
+
+
+///test case for i2c master read and master write///
+#if 0
+    i2c1Config("master");
+  	HAL_Delay(500);
 	uint8_t data1[8] = {0x54, 0x56, 0x98, 0x65};
 	uint8_t data[8] = {0};
 	uint8_t addrr = 0x04;
@@ -117,197 +129,28 @@ int main(void)
 
 	i2c1MasterWrite(addrr, 4, data1);
 
-
-
 	HAL_Delay(2000);
 
 	i2c1MasterRead(addrr | 0x01, 5, data);  //OR with 0x01 indicated that is reading address
 
 
-	if(data[0] == 0x89)
-	{
-
-		*GPIOx_ODR |= (1 << 15);
-	}
-	if(data[1] == 0x99)
-	{
-
-		*GPIOx_ODR |= (1 << 14);
-	}
-	if(data[2] == 0xA9)
-	{
-
-		*GPIOx_ODR |= (1 << 13);
-	}
-	if(data[3] == 0xB9)
-	{
-
-		*GPIOx_ODR |= (1 << 12);
-	}
-	if(data[4] == 0xC9)
-	{
-
-		HAL_Delay(500);
-		*GPIOx_ODR &= ~(1 << 15);
-		*GPIOx_ODR &= ~(1 << 14);
-		*GPIOx_ODR &= ~(1 << 13);
-		*GPIOx_ODR &= ~(1 << 12);
-		HAL_Delay(500);
-		*GPIOx_ODR |= (1 << 15);
-		*GPIOx_ODR |= (1 << 14);
-		*GPIOx_ODR |= (1 << 13);
-		*GPIOx_ODR |= (1 << 12);
-		HAL_Delay(500);
-		*GPIOx_ODR &= ~(1 << 15);
-		*GPIOx_ODR &= ~(1 << 14);
-		*GPIOx_ODR &= ~(1 << 13);
-		*GPIOx_ODR &= ~(1 << 12);
-		HAL_Delay(500);
-		*GPIOx_ODR |= (1 << 15);
-		*GPIOx_ODR |= (1 << 14);
-		*GPIOx_ODR |= (1 << 13);
-		*GPIOx_ODR |= (1 << 12);
-		HAL_Delay(500);
-	}
-	HAL_Delay(2000);
-
-	*GPIOx_ODR |= (1 << 14);
-	HAL_Delay(500);
-	*GPIOx_ODR &= ~(1 << 14);
-	HAL_Delay(500);
-	*GPIOx_ODR |= (1 << 14);
-	HAL_Delay(500);
-	*GPIOx_ODR &= ~(1 << 14);
-	HAL_Delay(500);
-	*GPIOx_ODR |= (1 << 14);
-	HAL_Delay(500);
-	*GPIOx_ODR &= ~(1 << 14);
-	HAL_Delay(500);
-	HAL_Delay(1000);
-	*GPIOx_ODR &= ~(1 << 15);
-
-
-	i2c1MasterRead(addrr | 0x01, 5, data);
-
-	if(data[0] == 0x89)
-	{
-
-		*GPIOx_ODR |= (1 << 15);
-	}
-	if(data[1] == 0x99)
-	{
-
-		*GPIOx_ODR |= (1 << 14);
-	}
-	if(data[2] == 0xA9)
-	{
-
-		*GPIOx_ODR |= (1 << 13);
-	}
-	if(data[3] == 0xB9)
-	{
-
-		*GPIOx_ODR |= (1 << 12);
-	}
-	if(data[4] == 0xC9)
-	{
-
-		HAL_Delay(500);
-		*GPIOx_ODR &= ~(1 << 15);
-		*GPIOx_ODR &= ~(1 << 14);
-		*GPIOx_ODR &= ~(1 << 13);
-		*GPIOx_ODR &= ~(1 << 12);
-		HAL_Delay(500);
-		*GPIOx_ODR |= (1 << 15);
-		*GPIOx_ODR |= (1 << 14);
-		*GPIOx_ODR |= (1 << 13);
-		*GPIOx_ODR |= (1 << 12);
-		HAL_Delay(500);
-		*GPIOx_ODR &= ~(1 << 15);
-		*GPIOx_ODR &= ~(1 << 14);
-		*GPIOx_ODR &= ~(1 << 13);
-		*GPIOx_ODR &= ~(1 << 12);
-		HAL_Delay(500);
-		*GPIOx_ODR |= (1 << 15);
-		*GPIOx_ODR |= (1 << 14);
-		*GPIOx_ODR |= (1 << 13);
-		*GPIOx_ODR |= (1 << 12);
-		HAL_Delay(500);
-	}
-	HAL_Delay(2000);
-
-
-	*GPIOx_ODR |= (1 << 14);
-	HAL_Delay(500);
-	*GPIOx_ODR &= ~(1 << 14);
-	HAL_Delay(500);
-	*GPIOx_ODR |= (1 << 14);
-	HAL_Delay(500);
-	*GPIOx_ODR &= ~(1 << 14);
-	HAL_Delay(500);
-	*GPIOx_ODR |= (1 << 14);
-	HAL_Delay(500);
-	*GPIOx_ODR &= ~(1 << 14);
-	HAL_Delay(500);
-	HAL_Delay(1000);
-	*GPIOx_ODR &= ~(1 << 15);
-
-
-	i2c1MasterRead(addrr | 0x01, 5, data);
-
-	if(data[0] == 0x89)
-	{
-
-		*GPIOx_ODR |= (1 << 15);
-	}
-	if(data[1] == 0x99)
-	{
-
-		*GPIOx_ODR |= (1 << 14);
-	}
-	if(data[2] == 0xA9)
-	{
-
-		*GPIOx_ODR |= (1 << 13);
-	}
-	if(data[3] == 0xB9)
-	{
-
-		*GPIOx_ODR |= (1 << 12);
-	}
-	if(data[4] == 0xC9)
-	{
-
-		HAL_Delay(500);
-		*GPIOx_ODR &= ~(1 << 15);
-		*GPIOx_ODR &= ~(1 << 14);
-		*GPIOx_ODR &= ~(1 << 13);
-		*GPIOx_ODR &= ~(1 << 12);
-		HAL_Delay(500);
-		*GPIOx_ODR |= (1 << 15);
-		*GPIOx_ODR |= (1 << 14);
-		*GPIOx_ODR |= (1 << 13);
-		*GPIOx_ODR |= (1 << 12);
-		HAL_Delay(500);
-		*GPIOx_ODR &= ~(1 << 15);
-		*GPIOx_ODR &= ~(1 << 14);
-		*GPIOx_ODR &= ~(1 << 13);
-		*GPIOx_ODR &= ~(1 << 12);
-		HAL_Delay(500);
-		*GPIOx_ODR |= (1 << 15);
-		*GPIOx_ODR |= (1 << 14);
-		*GPIOx_ODR |= (1 << 13);
-		*GPIOx_ODR |= (1 << 12);
-		HAL_Delay(500);
-	}
-	HAL_Delay(2000);
-
 	HAL_Delay(1000);
 
 	i2c1MasterWrite(addrr, 4, data1);
+#endif
+//////////////////////////////////////////////////////
 
 
+///test case for i2c slave write///
+#if 1
+	i2c1Config("slave"); //need for both read and write
+	uint8_t sentData[20] = {0x78, 0x79, 0x80, 0x81, 0x82, 0x83};
+	uint8_t received[20] = {0};
+	i2c1SlaveSendBytes(sentData);
+#endif
+//////////////////////////////////////////////////////
 
+/////tetst case for lcd-i2c///////////////////////////
 #if 0
   i2c1SendCmd(0x02);  //return home - forced command for 4-bit mode lcd
   HAL_Delay(5);
@@ -344,8 +187,10 @@ int main(void)
   HAL_Delay(5);
   i2c1SendString("hello this\nis");
    HAL_Delay(5);
-  /* USER CODE END 2 */
 #endif
+//////////////////////////////////////////////////////////
+  /* USER CODE END 2 */
+
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
@@ -353,6 +198,22 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+//// test case for receiver byte or multi bytes///
+#if 0
+	  i2c1SlaveReceiveBytes(received);
+		if(received[0] == 0x97)
+		{
+			blinkk();
+		}
+		if(received[1] == 0x94)
+		{
+			blinkk2();
+		}
+#endif
+/////////////////////////////////////////////////////
+		//HAL_Delay(100);
+	  //blinkk();
   }
   /* USER CODE END 3 */
 }
@@ -430,6 +291,123 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 
+
+
+
+
+
+
+
+
+void blinkk(void)
+{
+	uint32_t *GPIOx_ODR = (uint32_t*)(0x40020C00 + 0x14);
+	HAL_Delay(500);
+	*GPIOx_ODR &= ~(1 << 15);
+	*GPIOx_ODR &= ~(1 << 14);
+	*GPIOx_ODR &= ~(1 << 13);
+	*GPIOx_ODR &= ~(1 << 12);
+	HAL_Delay(500);
+	*GPIOx_ODR |= (1 << 15);
+	*GPIOx_ODR |= (1 << 14);
+	*GPIOx_ODR |= (1 << 13);
+	*GPIOx_ODR |= (1 << 12);
+	HAL_Delay(500);
+	*GPIOx_ODR &= ~(1 << 15);
+	*GPIOx_ODR &= ~(1 << 14);
+	*GPIOx_ODR &= ~(1 << 13);
+	*GPIOx_ODR &= ~(1 << 12);
+	HAL_Delay(500);
+	*GPIOx_ODR |= (1 << 15);
+	*GPIOx_ODR |= (1 << 14);
+	*GPIOx_ODR |= (1 << 13);
+	*GPIOx_ODR |= (1 << 12);
+	HAL_Delay(500);
+}
+
+
+void blinkk2(void)
+{
+	uint32_t *GPIOx_ODR = (uint32_t*)(0x40020C00 + 0x14);
+	HAL_Delay(500);
+	*GPIOx_ODR &= ~(1 << 15);
+	*GPIOx_ODR &= ~(1 << 14);
+	*GPIOx_ODR &= ~(1 << 13);
+	*GPIOx_ODR &= ~(1 << 12);
+	HAL_Delay(500);
+	*GPIOx_ODR |= (1 << 15);
+	*GPIOx_ODR |= (1 << 14);
+	//*GPIOx_ODR |= (1 << 13);
+	//*GPIOx_ODR |= (1 << 12);
+	HAL_Delay(500);
+	*GPIOx_ODR &= ~(1 << 15);
+	*GPIOx_ODR &= ~(1 << 14);
+	*GPIOx_ODR |= (1 << 13);
+	*GPIOx_ODR |= (1 << 12);
+	HAL_Delay(500);
+	*GPIOx_ODR |= (1 << 15);
+	*GPIOx_ODR |= (1 << 14);
+	*GPIOx_ODR &= ~(1 << 13);
+	*GPIOx_ODR &= ~(1 << 12);
+	HAL_Delay(500);
+	*GPIOx_ODR &= ~(1 << 15);
+		*GPIOx_ODR &= ~(1 << 14);
+		*GPIOx_ODR |= (1 << 13);
+		*GPIOx_ODR |= (1 << 12);
+		HAL_Delay(500);
+		*GPIOx_ODR |= (1 << 15);
+		*GPIOx_ODR |= (1 << 14);
+		*GPIOx_ODR &= ~(1 << 13);
+		*GPIOx_ODR &= ~(1 << 12);
+		HAL_Delay(500);
+}
+
+void testFunc(uint8_t* data)
+{
+
+	uint32_t *GPIOx_ODR = (uint32_t*)(0x40020C00 + 0x14);
+	if(data[0] == 0x89)
+	{
+
+		*GPIOx_ODR |= (1 << 15);
+	}
+	if(data[1] == 0x99)
+	{
+
+		*GPIOx_ODR |= (1 << 14);
+	}
+	if(data[2] == 0xA9)
+	{
+
+		*GPIOx_ODR |= (1 << 13);
+	}
+	if(data[3] == 0xB9)
+	{
+
+		*GPIOx_ODR |= (1 << 12);
+	}
+	if(data[4] == 0xC9)
+	{
+		blinkk();
+	}
+	HAL_Delay(2000);
+
+	*GPIOx_ODR |= (1 << 14);
+	HAL_Delay(500);
+	*GPIOx_ODR &= ~(1 << 14);
+	HAL_Delay(500);
+	*GPIOx_ODR |= (1 << 14);
+	HAL_Delay(500);
+	*GPIOx_ODR &= ~(1 << 14);
+	HAL_Delay(500);
+	*GPIOx_ODR |= (1 << 14);
+	HAL_Delay(500);
+	*GPIOx_ODR &= ~(1 << 14);
+	HAL_Delay(500);
+	HAL_Delay(1000);
+	*GPIOx_ODR &= ~(1 << 15);
+
+}
 
 /* USER CODE END 4 */
 

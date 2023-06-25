@@ -36,7 +36,7 @@
 
 #define PUPDR7__GPIOx_PUPDR			14
 #define PUPDR6__GPIOx_PUPDR			12
-#define  Pull_up					0x01
+#define Pull_up 					0x01
 
 
 #define I2C1EN__RCC_APB1ENR			21
@@ -46,20 +46,29 @@
 
 #define TRISE__I2C_TRISE			0
 
-#define PE__2C_CR1					0
-#define SWRST__2C_CR1				15
-#define POS__2C_CR1                 11
-#define ACK__2C_CR1 				10
-#define STOP__2C_CR1				9
-#define START__2C_CR1				8
+#define PE__I2C_CR1					0
+#define SWRST__I2C_CR1				15
+#define POS__I2C_CR1                11
+#define ACK__I2C_CR1 				10
+#define STOP__I2C_CR1				9
+#define START__I2C_CR1				8
 
 #define SB__I2C_SR1                 0
+#define AF__I2C_SR1 				10
 #define TxE__I2C_SR1 				0x07
 #define RxNE__I2C_SR1               0x06
+#define STOPF__I2C_SR1              0x04
 #define BTF__I2C_SR1				0x02
 #define ADDR__I2C_SR1 				0x01
 
-#define GPIOBEN__RCC_AHB1ENR    0x01
+
+
+#define ADD_7_1__I2C_OAR1           0x01
+#define ADDMODE__I2C_OAR1           15
+
+
+
+#define GPIOBEN__RCC_AHB1ENR        0x01
 
 
 
@@ -68,12 +77,16 @@
 #define I2C1_BASE_ADDR 0x40005400
 
 
-void i2c1Config(void);
+void i2c1Config(const char* masterORSlave);
+//void i2cSlaveConfig(void);
+
 void i2c1Start(void);
 void i2c1Address(uint8_t address);
 
 void i2c1AddressReadOneByte(uint8_t address);
 void i2c1ReadOneByte(uint8_t* data);
+void i2c1SlaveReceiveBytes(uint8_t *data);
+void i2c1SlaveSendBytes(uint8_t* data);
 
 
 void i2c1AddressReadTwoByte(uint8_t address);
