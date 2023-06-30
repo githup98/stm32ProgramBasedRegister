@@ -102,6 +102,9 @@ void i2c1Config(const char* masterORSlave) //master/slave
 	if(strcmp(masterORSlave, "slave") == 0)
 	{
 		*pI2C1__I2C_CR1 |= (1 << ACK__I2C_CR1); //ACK bit must be set by programmer after PE bit is set to 1
+		*pI2C1__I2C_CR2 |= (1 << ITEVTEN__I2C_CR2); //enable event interrupt for slave
+		*pI2C1__I2C_CR2 |= (1 << ITBUFEN__I2C_CR2);
+		*pI2C1__I2C_CR2 |= (1 << ITERREN__I2C_CR2);
 	}
 }
 

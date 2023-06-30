@@ -23,7 +23,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdint.h>
 #include <stdio.h>
-#include <i2c1.h>
+#include "i2c1.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,9 +44,17 @@
 
 
 #define RCC_BASE_ADDR 0x40023800
+#define GPIOA_BASE_ADDR 0x40020000
 #define GPIOB_BASE_ADDR 0x40020400
 #define I2C1_BASE_ADDR 0x40005400
 
+
+
+
+//#define lcd16x2
+//#define testRecSlaveModeWithINT
+//#define testReadWriteMasterModeWithoutINT
+//#define testRecSlaveModeWithoutINT
 
 
 
@@ -62,7 +70,22 @@
 /* USER CODE BEGIN PV */
 
 //AHB bus
+uint32_t *pI2C1_CR1 = (uint32_t*)(I2C1_BASE_ADDR);
+uint32_t *pI2C1_CR2 = (uint32_t*)(I2C1_BASE_ADDR + 0x04);
+uint32_t *pI2C1_DR = (uint32_t*)(I2C1_BASE_ADDR + 0x10);
+uint32_t *pI2C1_SR1 = (uint32_t*)(I2C1_BASE_ADDR + 0x14);
+uint32_t *pI2C1_SR2 = (uint32_t*)(I2C1_BASE_ADDR + 0x18);
 
+//uint8_t sentData[20] = {0x78, 0x79, 0x80, 0x81, 0x82, 0x83};
+uint8_t sentData[5] = {0x40, 0x20, 0x70, 0x90};
+uint8_t recData[5] = {0};
+uint32_t *GPIOx_ODR = (uint32_t*)(0x40020C00 + 0x14);
+
+
+
+uint8_t flagCount = 0;
+
+uint8_t totalByte = 0;
 
 /* USER CODE END PV */
 
@@ -90,6 +113,10 @@ void blinkk2(void);
 int main(void)
 {
   /* USER CODE BEGIN 1 */
+	//I2C1_EV_IRQn = 31// ??????
+	//HAL_NVIC_SetPriority(I2C1_EV_IRQn, 0x40, 0);
+
+
 
   /* USER CODE END 1 */
 
@@ -115,11 +142,25 @@ int main(void)
 
   //enablePinToDebug_portD();
 
+  //config for PA0 connected to VDD
+	uint32_t *pRCC_AHB1ENR = (uint32_t*)(RCC_BASE_ADDR + 0x30);
+	*pRCC_AHB1ENR |= (1 << 0); //enable GPIOA port
+	uint32_t *pRCC_APB2ENR = (uint32_t*)(RCC_BASE_ADDR + 0x44);
+	*pRCC_APB2ENR |= (1 << 14); //enable SYSCFG
 
+	uint32_t *pGPIOx_MODER = (uint32_t*)(GPIOA_BASE_ADDR + 0x00);
+	*pGPIOx_MODER &= ~(0x03); //input
+	uint32_t *pGPIOx_OTYPER = (uint32_t*)(GPIOA_BASE_ADDR + 0x04);
+	*pGPIOx_OTYPER &= ~(1 << 0);//pull up
+	uint32_t *pGPIOx_PUPDR = (uint32_t*)(GPIOA_BASE_ADDR + 0x0c);
+	*pGPIOx_PUPDR &= ~(0x03 << 0);
+	*pGPIOx_PUPDR |= (0x02 << 0);  //pull down
+	uint32_t *pGPIOx_IDR = (uint32_t*)(GPIOA_BASE_ADDR + 0x10);
+  	/////
 
 
 ///test case for i2c master read and master write///
-#if 0
+#if testReadWriteMasterModeWithoutINT
     i2c1Config("master");
   	HAL_Delay(500);
 	uint8_t data1[8] = {0x54, 0x56, 0x98, 0x65};
@@ -142,16 +183,27 @@ int main(void)
 
 
 ///test case for i2c slave write///
+
+
+
 #if 1
+	uint32_t *pNVIC_ISER0 = (uint32_t*)0xE000E100; //for I2C1_EV no.31
+	uint32_t *pNVIC_ISER1 = (uint32_t*)0xE000E104; //for I2C1 ER no.32
 	i2c1Config("slave"); //need for both read and write
-	uint8_t sentData[20] = {0x78, 0x79, 0x80, 0x81, 0x82, 0x83};
+
 	uint8_t received[20] = {0};
-	i2c1SlaveSendBytes(sentData);
+
+
+
+		*pNVIC_ISER0 |= (1 << 31); //enable EV I2C1
+		*pNVIC_ISER1 |= (1 << 0);  // enable ER I2C1
+
+	//i2c1SlaveSendBytes(sentData);
 #endif
 //////////////////////////////////////////////////////
 
 /////tetst case for lcd-i2c///////////////////////////
-#if 0
+#if lcd16x2
   i2c1SendCmd(0x02);  //return home - forced command for 4-bit mode lcd
   HAL_Delay(5);
   i2c1SendCmd(0x28);  //set interface 4-bit, 5x7
@@ -193,14 +245,62 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
 
+  if ((*pGPIOx_IDR & 0x01) == 1) //user button PA0 Pin
+	 {
+		 HAL_Delay(60);
+		 if ((*pGPIOx_IDR & 0x01) == 1)
+		 {
+			 *GPIOx_ODR &= ~(1 << 14);
+			 *GPIOx_ODR &= ~(1 << 13);
+			 *GPIOx_ODR &= ~(1 << 12);
+		 }
+
+	 }
+
+#if testRecSlaveModeWithINT
+  if(flagCount)
+  {
+	  if(recData[0] == 0x97)
+	  {
+		  *GPIOx_ODR &= ~(1 << 14);
+		  *GPIOx_ODR |= (1 << 14);
+	  }
+	  if(recData[1] == 0x94)
+		{
+		  *GPIOx_ODR &= ~(1 << 13);
+		  *GPIOx_ODR |= (1 << 13);
+		}
+	  else if(recData[1] == 0x99)
+	  {
+		  *GPIOx_ODR &= ~(1 << 15);
+		  HAL_Delay(300);
+		  *GPIOx_ODR |= (1 << 15);
+		  HAL_Delay(300);
+		  *GPIOx_ODR &= ~(1 << 15);
+		  HAL_Delay(300);
+		  *GPIOx_ODR |= (1 << 15);
+		  HAL_Delay(300);
+	  }
+	  if(recData[2] == 0)
+	  {
+		  *GPIOx_ODR &= ~(1 << 12);
+		  *GPIOx_ODR |= (1 << 12);
+	  }
+	  flagCount = 0;
+  }
+#endif
+
+
 //// test case for receiver byte or multi bytes///
-#if 0
+
+#if testRecSlaveModeWithoutINT
 	  i2c1SlaveReceiveBytes(received);
 		if(received[0] == 0x97)
 		{
@@ -212,8 +312,7 @@ int main(void)
 		}
 #endif
 /////////////////////////////////////////////////////
-		//HAL_Delay(100);
-	  //blinkk();
+
   }
   /* USER CODE END 3 */
 }
@@ -291,12 +390,47 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 
 
+void I2C1_EV_IRQHandler(void)
+{
+	if ((*pI2C1_SR1 >> ADDR__I2C_SR1) & 0x01)
+	{
+		uint8_t tmp = (*pI2C1_SR1 | *pI2C1_SR2);
+
+		return;
+
+	}
+	if ((*pI2C1_SR1 >> TxE__I2C_SR1) & 0x01)
+	{
+		*pI2C1_DR = sentData[totalByte];
+		totalByte += 1;
+
+		return;
+	}
+	if ((*pI2C1_SR1 >> RxNE__I2C_SR1) & 0x01)
+	{
+		recData[totalByte] = *pI2C1_DR;
+		totalByte += 1;
+		return;
+	}
+	if ((*pI2C1_SR1 >> STOPF__I2C_SR1) & 0x01)
+	{
+		//clear STOPF bit
+		uint8_t tmp = *pI2C1_SR1;
+		*pI2C1_CR1 |= (1 << PE__I2C_CR1);
+
+		totalByte = 0;
+		flagCount = 1; //for check point by LED
+		return;
+	}
 
 
+}
 
-
-
-
+void I2C1_ER_IRQHandler(void)
+{
+	*pI2C1_SR1 &= ~(1 << AF__I2C_SR1);
+	totalByte = 0;
+}
 
 
 void blinkk(void)
@@ -335,31 +469,36 @@ void blinkk2(void)
 	*GPIOx_ODR &= ~(1 << 13);
 	*GPIOx_ODR &= ~(1 << 12);
 	HAL_Delay(500);
+
 	*GPIOx_ODR |= (1 << 15);
 	*GPIOx_ODR |= (1 << 14);
 	//*GPIOx_ODR |= (1 << 13);
 	//*GPIOx_ODR |= (1 << 12);
 	HAL_Delay(500);
+
 	*GPIOx_ODR &= ~(1 << 15);
 	*GPIOx_ODR &= ~(1 << 14);
 	*GPIOx_ODR |= (1 << 13);
 	*GPIOx_ODR |= (1 << 12);
 	HAL_Delay(500);
+
 	*GPIOx_ODR |= (1 << 15);
 	*GPIOx_ODR |= (1 << 14);
 	*GPIOx_ODR &= ~(1 << 13);
 	*GPIOx_ODR &= ~(1 << 12);
 	HAL_Delay(500);
+
 	*GPIOx_ODR &= ~(1 << 15);
-		*GPIOx_ODR &= ~(1 << 14);
-		*GPIOx_ODR |= (1 << 13);
-		*GPIOx_ODR |= (1 << 12);
-		HAL_Delay(500);
-		*GPIOx_ODR |= (1 << 15);
-		*GPIOx_ODR |= (1 << 14);
-		*GPIOx_ODR &= ~(1 << 13);
-		*GPIOx_ODR &= ~(1 << 12);
-		HAL_Delay(500);
+	*GPIOx_ODR &= ~(1 << 14);
+	*GPIOx_ODR |= (1 << 13);
+	*GPIOx_ODR |= (1 << 12);
+	HAL_Delay(500);
+
+	*GPIOx_ODR |= (1 << 15);
+	*GPIOx_ODR |= (1 << 14);
+	*GPIOx_ODR &= ~(1 << 13);
+	*GPIOx_ODR &= ~(1 << 12);
+	HAL_Delay(500);
 }
 
 void testFunc(uint8_t* data)

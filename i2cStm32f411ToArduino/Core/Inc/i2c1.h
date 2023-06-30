@@ -41,7 +41,9 @@
 
 #define I2C1EN__RCC_APB1ENR			21
 #define FREQ__I2C_CR2				0
-
+#define ITBUFEN__I2C_CR2            10
+#define ITEVTEN__I2C_CR2            9
+#define ITERREN__I2C_CR2            8
 #define CCR__I2C_CCR				0
 
 #define TRISE__I2C_TRISE			0
@@ -107,5 +109,10 @@ void gotoXYLcd(uint8_t addressI2C, uint8_t x, uint8_t y);
 
 //////*****///
 void enablePinToDebug_portD(void);
+
+
+
+
+
 
 #endif /* INC_I2C1_H_ */
