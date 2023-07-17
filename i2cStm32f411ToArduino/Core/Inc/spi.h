@@ -62,6 +62,8 @@
 #define RXNEIE__SPI_CR2				0x06
 
 #define ERRIE__SPI_CR2				0x05
+#define TXDMAEN__SPI_CR2            0x01
+#define RXDMAEN__SPI_CR2            0x00
 
 void configSPI4(void);
 void spi4ReceiveData(uint8_t *data, uint8_t *data2);

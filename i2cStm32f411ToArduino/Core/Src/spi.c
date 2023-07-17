@@ -125,11 +125,14 @@ pins to alternate functions.
 	*pSPI4__SPI_CR2 &= ~(1 << FRF__SPI_CR2);
 
 	//enable interrupt
-	*pSPI4__SPI_CR2 |= (1 << TXEIE__SPI_CR2);
-	*pSPI4__SPI_CR2 |= (1 << RXNEIE__SPI_CR2);
+	//*pSPI4__SPI_CR2 |= (1 << TXEIE__SPI_CR2);
+	//*pSPI4__SPI_CR2 |= (1 << RXNEIE__SPI_CR2);
 	*pSPI4__SPI_CR2 |= (1 << ERRIE__SPI_CR2);
 
-	//set slvae mode, enable SPI
+	*pSPI4__SPI_CR2 |= (1 << RXDMAEN__SPI_CR2);
+	*pSPI4__SPI_CR2 |= (1 << TXDMAEN__SPI_CR2);
+
+	//set slave mode, enable SPI
 	*pSPI4__SPI_CR1 &= ~(1 << MSTR__SPI_CR1);
 
 	*pSPI4__SPI_CR1 &= ~(1 << SPE__SPI_CR1);
