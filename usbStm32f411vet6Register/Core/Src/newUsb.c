@@ -23,12 +23,12 @@ uint32_t *pOTG_FS_DIEPEMPMSK = (uint32_t*)(OTG_FS_BASE_ADDR + 0x834);
 
 uint32_t *pOTG_FS_GRXFSIZ = (uint32_t*)(OTG_FS_BASE_ADDR + 0x024);
 uint32_t *pOTG_FS_HNPTXFSIZ__DIEPTXF0 = (uint32_t*)(OTG_FS_BASE_ADDR + 0x028);
-uint32_t *pOTG_FS_DIEPTXFx = (uint32_t*)(OTG_FS_BASE_ADDR + 0x104 + 0x04);
+uint32_t *pOTG_FS_DIEPTXF1_3 = (uint32_t*)(OTG_FS_BASE_ADDR + 0x104 + 0x04);
 
-uint32_t *pOTG_FS_DIEPINTx = (uint32_t*)(OTG_FS_BASE_ADDR + 0x908 + 0x20*0);
-uint32_t *pOTG_FS_DOEPINTx = (uint32_t*)(OTG_FS_BASE_ADDR + 0xB08 + 0x20*0);
-uint32_t *pOTG_FS_DOEPCTLx = (uint32_t*)(OTG_FS_BASE_ADDR + 0xB00);
-uint32_t *pOTG_FS_DIEPCTLx = (uint32_t*)(OTG_FS_BASE_ADDR + 0x900);
+////uint32_t *pOTG_FS_DIEPINTx = (uint32_t*)(OTG_FS_BASE_ADDR + 0x908 + 0x20*0);
+////uint32_t *pOTG_FS_DOEPINTx = (uint32_t*)(OTG_FS_BASE_ADDR + 0xB08 + 0x20*0);
+////uint32_t *pOTG_FS_DOEPCTLx = (uint32_t*)(OTG_FS_BASE_ADDR + 0xB00);
+////uint32_t *pOTG_FS_DIEPCTLx = (uint32_t*)(OTG_FS_BASE_ADDR + 0x900);
 uint32_t *pOTG_FS_DOEPTSIZ0 = (uint32_t*)(OTG_FS_BASE_ADDR + 0xB10);
 uint32_t *pOTG_FS_DIEPTSIZ0 = (uint32_t*)(OTG_FS_BASE_ADDR + 0x910 + 0x20 * 0);
 
@@ -188,11 +188,24 @@ __ALIGN_BEGIN static uint8_t USBD_CDC_CfgDesc[USB_CDC_CONFIG_DESC_SIZ] __ALIGN_E
 
 volatile uint8_t totalLengthEp0 = 0;
 volatile uint8_t remainLengthEp0 = 0;
-uint8_t maxPacketSizeEp0 = 64;
+uint8_t xferInLen = 0;
+uint8_t xferOutLen = 0;
 
+uint8_t UserTxBuff[Tx_BUFFER_SIZE];
+uint8_t UserRxBuff[Rx_BUFFER_SIZE];
 
-volatile void *Descriptor = NULL;  //using volatile to update Descriptor in interrupt context
+////volatile void *Descriptor = NULL;  //using volatile to update Descriptor in interrupt context
+void *Descriptor = NULL;  //using volatile to update Descriptor in interrupt context
+						  //using int or using pointer to function for multi desc
 
+//for debug
+#define LIMIT 20
+#define LIMIT_1 21
+uint8_t indexCheckOderRun = 0;
+uint8_t checkOderRun[20] = {0};
+uint8_t startStoreOder = 0;
+
+//////
 
 //uint32_t dataFromHost[20] = {0};
 
@@ -201,13 +214,15 @@ struct epStatus
 	uint8_t In;
 	uint8_t Out;
 	uint8_t Stall;
+	uint8_t type;
 };
 
 struct epStatus epStt = 
 {
 	.In = 0,   //"." mean init not follow order of struct member, in this case it's yes/no is still ok
 	.Out = 0,
-	.Stall = 0
+	.Stall = 0,
+	.type = 0,
 };
 
 
@@ -382,9 +397,9 @@ void setTxSizeFifo(uint8_t numTx, uint8_t size)
 		int i = 0;
 		for(i = 0; i < (numTx - 1U); i++)
 		{
-			TxOffset += (*(pOTG_FS_DIEPTXFx + 0x04*i)) >> 16; //get size of Txx
+			TxOffset += (*(pOTG_FS_DIEPTXF1_3 + 0x04*i)) >> 16; //get size of Txx
 		}
-		*(pOTG_FS_DIEPTXFx + 0x04*i) = (uint16_t)size << 16 | TxOffset;
+		*(pOTG_FS_DIEPTXF1_3 + 0x04*i) = (uint16_t)size << 16 | TxOffset;
 	}
 
 }
@@ -407,18 +422,18 @@ void startDev(void)
 
 
 
-uint32_t usbReceivedData[12] = {0};
+uint32_t epReceivedData[12] = {0};
 void USB_ReadPacket(void)
 {
 	//read 8 byte, it is request device description package from host
 	for(int i = 0; i < 2; i++)
 	{
-		usbReceivedData[i] = *(uint32_t*)(OTG_FS_BASE_ADDR + OTG_FIFO_BASE);
+		epReceivedData[i] = *(uint32_t*)(OTG_FS_BASE_ADDR + OTG_FIFO_BASE);
 	}
 
 }
 
-extern uint8_t DeviceDescriptor[18];
+uint8_t DeviceDescriptor[18];
 void *getFSDeviceDescriptor(uint8_t *lenDes)
 {
 	*lenDes = sizeof(DeviceDescriptor);
@@ -431,24 +446,25 @@ void *getFsConfigurationDesc(uint8_t *lenDes)
 	return (void*)USBD_CDC_CfgDesc;
 }
 
-uint8_t usbSendData(uint32_t* pSetup, uint8_t len)
+uint8_t ep0SendData(uint8_t *pBuff, uint8_t epAddr, uint8_t *lengthData)
 {
-	uint16_t lenRequired = (pSetup[1] >> 16) & 0xffff;
+
 	if(epStt.In == 1)
 	{
 
-		if(len == 0)
+		if(*lengthData == 0)
 		{
 			*pOTG_FS_DIEPTSIZ0 &= ~(0x3FF << PKTCNT);
 			*pOTG_FS_DIEPTSIZ0 &= ~(0x7FFFF << XFRSIZ);
 
 			*pOTG_FS_DIEPTSIZ0 |= ((0x3FF << PKTCNT) & (1 << PKTCNT));
 		}
-		if(len > lenRequired)
+
+		if(*lengthData > MAX_PACKET_SIZE_EP0)
 		{
-			len = lenRequired;
+			*lengthData = MAX_PACKET_SIZE_EP0;
 		}
-		if(len != 0)
+		if(*lengthData != 0)
 		{
 
 
@@ -457,15 +473,15 @@ uint8_t usbSendData(uint32_t* pSetup, uint8_t len)
 
 			*pOTG_FS_DIEPTSIZ0 |= ((0x3FF << PKTCNT) & (1 << PKTCNT));
 
-			*pOTG_FS_DIEPTSIZ0 |= (len << XFRSIZ);
+			*pOTG_FS_DIEPTSIZ0 |= (*lengthData << XFRSIZ);
 		}
 
 
 		//enable EP (start transmit)
-		*pOTG_FS_DIEPCTLx |= ((1 << CNAK) | (1 << EPENA)); //respond DATA is send  (show packet in wireshark)
+		*pOTG_FS_DIEPCTL(0) |= ((1 << CNAK) | (1 << EPENA)); //respond DATA is send  (show packet in wireshark)
 
 		//enable Tx empty fifo interrupt
-		if(len > 0)
+		if(*lengthData > 0)
 		{
 			//for enum 0
 			*pOTG_FS_DIEPEMPMSK |= (1 << 0);
@@ -473,9 +489,9 @@ uint8_t usbSendData(uint32_t* pSetup, uint8_t len)
 	}
 	else
 	{
-		if(len > lenRequired)
+		if(*lengthData > 0) //due to if it have data need to transfer, ep will sent 64byte for each transfer 
 		{
-			len = lenRequired;
+			*lengthData = MAX_PACKET_SIZE_EP0;
 		}
 		//if(lenRequired != 0)
 		//{
@@ -484,16 +500,79 @@ uint8_t usbSendData(uint32_t* pSetup, uint8_t len)
 
 			*pOTG_FS_DOEPTSIZ0 |= ((0x3FF << PKTCNT) & (1 << PKTCNT));
 
-			*pOTG_FS_DOEPTSIZ0 |= (len << XFRSIZ);
-
+			*pOTG_FS_DOEPTSIZ0 |= (*lengthData << XFRSIZ);
+			
 			//enable EP (start transmit)
-			*pOTG_FS_DOEPCTLx |= ((1 << CNAK) | (1 << EPENA));
+			*pOTG_FS_DOEPCTL(0) |= ((1 << CNAK) | (1 << EPENA));
 
 		//}
 	}
 
 	return 0;
 }
+
+
+
+uint8_t epXSendData(uint8_t* pBuff, uint8_t epAddr,  uint8_t *lengthData)
+{
+	if(epStt.In == 1)
+	{
+
+		if(*lengthData == 0)
+		{
+			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) &= ~(0x3FF << PKTCNT);
+			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) &= ~(0x7FFFF << XFRSIZ);
+
+			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) |= ((0x3FF << PKTCNT) & (1 << PKTCNT));
+		}
+		if(*lengthData > MAX_PACKET_SIZE_EPx)
+		{
+			*lengthData = MAX_PACKET_SIZE_EPx;
+		}
+		if(*lengthData != 0)
+		{
+
+			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) &= ~(0x3FF << PKTCNT);
+			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) &= ~(0x7FFFF << XFRSIZ);
+
+			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) |= ((0x3FF << PKTCNT) & (1 << PKTCNT));
+			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) |= (*lengthData << XFRSIZ);
+		}
+
+
+		//enable EP (start transmit)
+		*pOTG_FS_DIEPCTL(epAddr & 0x0f) |= ((1 << CNAK) | (1 << EPENA)); //respond DATA is send  (show packet in wireshark)
+
+		//enable Tx empty fifo interrupt
+		if(*lengthData > 0)
+		{
+			//for enum 0
+			*pOTG_FS_DIEPEMPMSK |= (1 << 0);
+		}
+	}
+	else
+	{
+		if(*lengthData > MAX_PACKET_SIZE_EPx)
+		{
+			*lengthData = MAX_PACKET_SIZE_EPx;
+		}
+		//if(requiredLength != 0)
+		//{
+			*pOTG_FS_DOEPTSIZ(epAddr & 0x0f) &= ~(0x3FF << PKTCNT);
+			*pOTG_FS_DOEPTSIZ(epAddr & 0x0f) &= ~(0x7FFFF << XFRSIZ);
+
+			*pOTG_FS_DOEPTSIZ(epAddr & 0x0f) |= ((0x3FF << PKTCNT) & (1 << PKTCNT));
+			*pOTG_FS_DOEPTSIZ(epAddr & 0x0f) |= (*lengthData << XFRSIZ);
+
+			//enable EP (start transmit)
+			*pOTG_FS_DOEPCTL(epAddr & 0x0f) |= ((1 << CNAK) | (1 << EPENA));
+
+		//}
+	}
+
+	return 0;
+}
+
 
 
 void setAddressEp(uint32_t *setupPacket)
@@ -508,6 +587,174 @@ void setAddressEp(uint32_t *setupPacket)
 }
 
 
+
+
+#if 1 //move to new file
+
+void usbdActivateEndpoint(uint8_t epNum, uint8_t epType, uint8_t epMaxPacketSize)
+{
+	if(epStt.In == 1)
+	{
+		//unmask interrupt for partical end point
+		*pOTG_FS_DAINTMSK |= ((0xffff << 0) & (1 << epNum)); //equivalant 2 command: clear previous value, assign new value
+		if((*pOTG_FS_DIEPCTL(epNum) >> EPENA) == 0x01) //due to EPENA is 31th bit -> no need to & 0x01
+		{
+			*pOTG_FS_DIEPCTL(epNum) |= ((epMaxPacketSize << MPSIZ__OTG_FS_DIEPCTL0) | (epType << 18) | (epNum << 22)\
+			| (1 << SD0PID_SEVNFRM) | (1 << USBAEP));
+		}
+	}	
+	else
+	{
+		//unmask interrupt for partical end point
+		*pOTG_FS_DAINTMSK |= ((0xffff << 16) & ((1 << epNum) << 16)); //equivalant 2 command: clear previous value, assign new value
+		if((*pOTG_FS_DOEPCTL(epNum) >> EPENA) == 0x01) //due to EPENA is 31th bit -> no need to & 0x01
+		{
+			*pOTG_FS_DOEPCTL(epNum) |= ((epMaxPacketSize << MPSIZ__OTG_FS_DIEPCTL0) | (epType << 18) | (epNum << 22)\
+			| (1 << SD0PID_SEVNFRM) | (1 << USBAEP));
+		}
+	}
+}
+
+void openEp(uint8_t epAddress, uint8_t epType, uint8_t epMaxPacketSize)
+{
+	if((epAddress & 0x80) == 0x80)
+	{
+		epStt.In = 1;
+	}
+	else
+	{
+		epStt.In = 0;
+	}
+	
+	// temp no need
+	//ep->num = ep_addr & EP_ADDR_MSK;
+	//ep->maxpacket = ep_mps;
+	//ep->type = ep_type;
+
+	if(epStt.In != 0)
+	{
+		//set txfifo
+		//ep->tx_fifo_num = ep->num;
+	}
+	
+	// init data PID
+	if(epType == 2) //bulk type
+	{
+		//ep->data_pid_start = 0U;
+	}
+
+	//epNum = epAddress & 0x0f;
+	usbdActivateEndpoint((epAddress & 0x0f), epType, epMaxPacketSize);
+
+}
+
+
+void usbdOpenEp(uint8_t epAddress, uint8_t epType, uint8_t epMaxPacketSize)
+{
+	openEp(epAddress, epType, epMaxPacketSize);
+}
+
+#endif //if 0 move to new file
+
+
+/*usbSend and usbReceive , both are use ep0SendData and epXSendData*/
+void usbSend(uint8_t* pBuff, uint8_t epAddr, uint8_t lenData)
+{
+	////epNum != epAddr
+	xferInLen = lenData;
+
+	epStt.In = 1;
+	
+	if((epAddr & 0x0f) == 0)
+	{
+		ep0SendData(NULL, epAddr, &xferInLen);
+
+	}
+	else
+	{
+		if(epStt.type == EP_TYPE_ISOC) // = 0x01
+		{	
+			epXSendData(pBuff, epAddr, &xferInLen);//pBuff due to it contain writePacket func for ISOC type 
+		}
+		else
+		{
+			
+			epXSendData(NULL, epAddr, &xferInLen); 
+		}
+	}
+}
+
+
+void usbReceive(uint8_t *pBuff, uint8_t epAddr, uint8_t lenData)
+{
+	
+	xferOutLen = lenData;
+	
+	epStt.In = 0;	
+	if((epAddr & 0x0f) == 0)
+	{
+		ep0SendData(NULL, epAddr, &xferOutLen);  //<==> EP0StartXfer in HAL library
+	}
+	else
+	{
+		if(epStt.type == EP_TYPE_ISOC) // == 0x01	
+		{
+			epXSendData(pBuff, epAddr, &xferOutLen);
+		}
+		else
+		{
+			epXSendData(NULL, epAddr, &xferOutLen);
+		}
+	}
+	
+}
+
+void usbdCdcClassInit(uint8_t speed)
+{
+	if(speed == 0) //usb high speed
+	{
+		//add some code for this device type
+	}
+	else if(speed == 3) //usb full speed
+	
+	{
+		//open IN, OUT ep
+		//usbdOpenEp(addressm type, size);
+		usbdOpenEp(CDC_IN_EP_ADDR, USBD_EP_TYPE_BULK, CDC_DATA_FS_IN_PACKET_SIZE);
+		
+		//change state of ep 1: is used (no need in tthis period)
+		//
+
+		usbdOpenEp(CDC_OUT_EP_ADDR, USBD_EP_TYPE_BULK, CDC_DATA_FS_OUT_PACKET_SIZE);
+		
+	}
+
+	//open CDC_CMD EP
+	usbdOpenEp(CDC_CMD_EP, USBD_EP_TYPE_INTR, CDC_CMD_PACKET_SIZE);
+	//change state of ep 2: is used (no need in tthis period),
+	//
+
+	//init physical interface components (skipped in low level programing)
+
+	//prepair receive next packet
+	if(speed == 0)
+	{
+		//setting for high speed device
+	}
+	else if(speed == 3)
+	{
+		//epReceived();
+	}
+
+}
+
+
+
+void usbdSetClass(uint8_t speed) //parse type usb class
+{
+	usbdCdcClassInit(speed);
+}
+
 uint8_t min(uint8_t len1, uint16_t len2)
 {
 	return (uint8_t)(len1 < len2 ? len1 : len2);
@@ -518,63 +765,64 @@ uint8_t checkProblem = 0;
 
 void stdDev(uint32_t *pSetup)
 {
+	uint16_t lenFromSetupCommand = (pSetup[1] >> 16);
 	uint8_t bRequest = (pSetup[0] >> 8) & 0xff;
 	uint8_t lenDesc = 0;
-	uint16_t lenFromSetupCommand = (pSetup[1] >> 16);
-
+	uint8_t speedEnumDone = (*pOTG_FS_DSTS >> ENUMSPD) & 0x03;		
 
 	switch (bRequest)
 	{
 	case 5:
 		setAddressEp(pSetup);
-		epStt.In = 1;
-		usbSendData(NULL, 0);
+		usbSend(NULL, 0x00, 0);
 		break;
+
 	case 6:
 		switch(pSetup[0] >> 24)
 		{
 			case 0x01: //get device descriptor
-				epStt.In = 1;
 
-				//////
-				Descriptor = getFSDeviceDescriptor(&lenDesc);
+				Descriptor = (void*)getFSDeviceDescriptor(&lenDesc);
 				remainLengthEp0 = min(lenDesc, lenFromSetupCommand);
 				totalLengthEp0 = remainLengthEp0;
 
-				//////
-				usbSendData(pSetup, remainLengthEp0);
+				usbSend(NULL, 0x80, remainLengthEp0);
 				break;
+
 			case 0x02: //get config
+
 				epStt.In = 1;
-				//usbSendData(NULL, NULL, 0);
 				//we must create function to change maxpacketsize between HS and FS, check HAL code
 				//but now we can skip it due to value default in config des is for FS
 
 				//attention due to size of config desc is larger 64 byte
 				
-				Descriptor = getFsConfigurationDesc(&lenDesc);
+				Descriptor = (void*)getFsConfigurationDesc(&lenDesc);
 				remainLengthEp0 = min(lenDesc, lenFromSetupCommand);
 				totalLengthEp0 = remainLengthEp0;
 				
-
-				usbSendData(pSetup, remainLengthEp0);
-				
+				usbSend(NULL, 0x80, remainLengthEp0);
 				break;
+
 			case 0x06: //get device_qualifer (for device support both HS and FS speed)
-				if(((*pOTG_FS_DSTS >> ENUMSPD) & 0x03) == 0x00) //High speed
+				if(speedEnumDone == 0x00) //High speed
 				{
 					//do some things
 				}
-				else if(((*pOTG_FS_DSTS >> ENUMSPD) & 0x03) == 0x03) //full speed
+				else if(speedEnumDone == 0x03) //full speed
 				{
-					epStt.In = 1;
-					usbSendData(NULL, 0); //no send data to avoid waiting from host.
+					usbSend(NULL, 0x80, 0); //no send data to avoid waiting from host.
 				}
 				break;
+
 			default:
 				break;
 		}
 
+		break;
+
+	case 0x09: //set config
+		usbdSetClass(speedEnumDone); //class:cdc or msc or dfu ... and speed param
 		break;
 	default:
 		break;
@@ -626,18 +874,17 @@ void writePacket(uint8_t *dataSrc, uint8_t len)
 }
 
 
-uint8_t indexCheckOderRun = 0;
-void writeEmpFifo(uint8_t *data, uint8_t len)
+static void  writeEmpFifo(uint8_t **data, uint8_t len)
 {
 	uint8_t lenLocal = 0;
 	uint8_t len32 = 0;
 	uint8_t count = 0;
-	
+
 	lenLocal = len - count;
 
-	if(lenLocal > 64)
+	if(lenLocal > MAX_PACKET_SIZE_EP0)
 	{
-		lenLocal = 64; //64 is max packet size, this value should be read from register, this line is aim for testing
+		lenLocal = MAX_PACKET_SIZE_EP0; //64 is max packet size, this value should be read from register, this line is aim for testing
 	}
 
 	len32 = (lenLocal + 3) / 4U;
@@ -645,26 +892,25 @@ void writeEmpFifo(uint8_t *data, uint8_t len)
 	while((*pOTG_FS_DTXFSTS >= len32) && (len != 0U) && (count < len)) //this line must be modify later
 	{
 		lenLocal = len - count;
-		if(lenLocal > 64)
+		if(lenLocal > MAX_PACKET_SIZE_EP0)
 		{
-			lenLocal = 64;
+			lenLocal = MAX_PACKET_SIZE_EP0;
 		}
 
 		len32 = (len + 3) / 4U;
-		writePacket(data, lenLocal); //no data respone to host (checked by wireshark) due to ep have already enabled
+		writePacket(*data, len); //
 
-		data += lenLocal;
+		(*data) += lenLocal; //descTrans += lenLocal
 		count += lenLocal;
 	}
 
-
 	// remove tx empty fifo intererrupt flag for end point 0
-
-	if(len <= count)
+	if(lenLocal <= count)
 	{
 		*pOTG_FS_DIEPEMPMSK &= ~(1 << 0);
 	}
-
+	
+	return; 	
 }
 
 
@@ -672,19 +918,19 @@ void usbEpSetStall(uint8_t epNum)
 {
 	if(epStt.In == 1)
 	{
-		if((((*pOTG_FS_DIEPCTLx >> 31) & 0x01) == 0) && (epNum != 0)) //need to modify for all CTL register
+		if((((*pOTG_FS_DIEPCTL(epNum) >> 31) & 0x01) == 0) && (epNum != 0)) //need to modify for all CTL register
 		{
-			*pOTG_FS_DIEPCTLx |= ~(1 << 30); //this line will clear EPDIS bit (rs bit), mean EPDIS interrupt will be trigger
+			*pOTG_FS_DIEPCTL(epNum) |= ~(1 << 30); //this line will clear EPDIS bit (rs bit), mean EPDIS interrupt will be trigger
 		}
-		*pOTG_FS_DIEPCTLx |= (1 << STALL);
+		*pOTG_FS_DIEPCTL(epNum) |= (1 << STALL);
 	}
 	else
 	{
-		if((((*pOTG_FS_DOEPCTLx >> 31) & 0x01) == 0) && (epNum != 0)) //need to modify for all CTL register
+		if((((*pOTG_FS_DOEPCTL(epNum) >> 31) & 0x01) == 0) && (epNum != 0)) //need to modify for all CTL register
 		{
-			*pOTG_FS_DOEPCTLx |= ~(1 << 30); //this line will clear EPDIS bit (rs bit), mean EPDIS interrupt will be trigger
+			*pOTG_FS_DOEPCTL(epNum) |= ~(1 << 30); //this line will clear EPDIS bit (rs bit), mean EPDIS interrupt will be trigger
 		}
-		*pOTG_FS_DOEPCTLx |= (1 << STALL);
+		*pOTG_FS_DOEPCTL(epNum) |= (1 << STALL);
 	}
 }
 
@@ -743,30 +989,26 @@ void stallEP(uint8_t epAddress)
 
 uint8_t timeWrite = 0;
 
-void receivedStatus(void)
-{
-	epStt.In = 0;	
-	usbSendData(NULL, 0);  //<==> EP0StartXfer in HAL library
 
-}
 
-void dataInStageCallback(uint32_t *pSetup)
+void dataInStageCallback(uint32_t *pSetup)///need to add epNum param
 {
 	
 	if(1)//if enum == 0, change if condition for overall
 	{
 		if(1) //check status: USBD_EP0_DATA_IN, please complete the code for the overview
 		{
-			if(remainLengthEp0 > maxPacketSizeEp0)
+
+			if(remainLengthEp0 > MAX_PACKET_SIZE_EP0)
 			{
-				remainLengthEp0 -= maxPacketSizeEp0;
-				usbSendData(pSetup, remainLengthEp0);
-				receivedStatus();
+				remainLengthEp0 -= MAX_PACKET_SIZE_EP0;
+				usbSend(NULL, 0x80, remainLengthEp0);
+				usbReceive(NULL, 0x80, 0);
 			}
 			else
 			{
 				stallEP(0x80);
-				receivedStatus();
+				usbReceive(NULL, 0x80, 0);
 			}
 		}
 	}
@@ -808,15 +1050,15 @@ void resetUSBSignal(void)
 	for(int i = 0; i < 4; i++)
 	{
 		//clear status of interrupt
-		*(uint32_t*)(pOTG_FS_DIEPINTx + 0x20 * i) = 0xFB7F;
-		*(uint32_t*)(pOTG_FS_DOEPINTx + 0x20 * i) = 0xFB7F;
+		*pOTG_FS_DIEPINT(i) = 0xFB7F;
+		*pOTG_FS_DOEPINT(i) = 0xFB7F;
 
 		//clear STALL signal
-		*(uint32_t*)(pOTG_FS_DIEPCTLx + 0x20 * i) &= ~(1 << STALL);
-		*(uint32_t*)(pOTG_FS_DOEPCTLx + 0x20 * i) &= ~(1 << STALL);
+		*pOTG_FS_DIEPCTL(i) &= ~(1 << STALL);
+		*pOTG_FS_DOEPCTL(i) &= ~(1 << STALL);
 
 		//enable SNAK for OUT end point
-		*(uint32_t*)(pOTG_FS_DOEPCTLx + 0x20 * i) |= (1 << SNAK);
+		*pOTG_FS_DOEPCTL(i) |= (1 << SNAK);
 	}
 
 	//enable interrupt for end point IN 0//OUT 0
@@ -839,7 +1081,7 @@ void resetUSBSignal(void)
 void usbActiveSetup(void)
 {
 	//set maxpacket size
-	*pOTG_FS_DIEPCTLx &= ~(1 << MPSIZ__OTG_FS_DIEPCTLx); //00 mean maxpacket size ==  64 bytes (maximum)
+	*pOTG_FS_DIEPCTL(0) &= ~(1 << MPSIZ__OTG_FS_DIEPCTLx); //00 mean maxpacket size ==  64 bytes (maximum)
 
 	//clear global IN NAK CGINAK bit in DCTL (w bit)
 	*pOTG_FS_DCTL |= (1 << CGINAK);
@@ -943,68 +1185,6 @@ void usbSetTRDTValue(uint8_t hclk, uint8_t speed)
 //}
 
 
-void usbdActivateEndpoint(uint8_t epNum, uint8_t epType, uint8_t epMaxPacketSize)
-{
-	if(epStt.In == 1)
-	{
-		//unmask interrupt for partical end point
-		*pOTG_FS_DAINTMSK |= ((0xffff << 0) & (1 << epNum)); //equivalant 2 command: clear previous value, assign new value
-		if((*pOTG_FS_DIEPCTLx >> EPENA) == 0x01) //due to EPENA is 31th bit -> no need to & 0x01
-		{
-			*pOTG_FS_DIEPCTLx |= ((epMaxPacketSize << MPSIZ__OTG_FS_DIEPCTL0) | (epType << 18) | (epNum << 22)\
-			| (1 << SD0PID_SEVNFRM) | (1 << USBAEP));
-		}
-	}	
-	else
-	{
-		//unmask interrupt for partical end point
-		*pOTG_FS_DAINTMSK |= ((0xffff << 16) & ((1 << epNum) << 16)); //equivalant 2 command: clear previous value, assign new value
-		if((*pOTG_FS_DOEPCTLx >> EPENA) == 0x01) //due to EPENA is 31th bit -> no need to & 0x01
-		{
-			*pOTG_FS_DOEPCTLx |= ((epMaxPacketSize << MPSIZ__OTG_FS_DIEPCTL0) | (epType << 18) | (epNum << 22)\
-			| (1 << SD0PID_SEVNFRM) | (1 << USBAEP));
-		}
-	}
-}
-
-void openEp(uint8_t epAddress, uint8_t epType, uint8_t epMaxPacketSize)
-{
-	if((epAddress & 0x80) == 0x80)
-	{
-		epStt.In = 1;
-	}
-	else
-	{
-		epStt.In = 0;
-	}
-	
-	// temp no need
-	//ep->num = ep_addr & EP_ADDR_MSK;
-	//ep->maxpacket = ep_mps;
-	//ep->type = ep_type;
-
-	if(epStt.In != 0)
-	{
-		//set txfifo
-		//ep->tx_fifo_num = ep->num;
-	}
-	
-	// init data PID
-	if(epType == 2) //bulk type
-	{
-		//ep->data_pid_start = 0U;
-	}
-
-	//epNum = epAddress & 0x0f;
-	usbdActivateEndpoint((epAddress & 0x0f), epType, epMaxPacketSize);
-
-}
-
-
-void usbdOpenEp(uint8_t epAddress, uint8_t epType, uint8_t epMaxPacketSize)
-{
-	openEp(epAddress, epType, epMaxPacketSize);
-}
 
 void enumReset(void)
 {
@@ -1034,22 +1214,31 @@ void enumdoneResetCallback(void)
 	enumReset();
 }
 
-#define LIMIT 20
-#define LIMIT_1 21
-uint8_t checkOderRun[20] = {0};
-//uint8_t indexCheckOderRun = 0;
-uint8_t startStoreOder = 0;
+
+uint16_t readOutEpIntrStatus(uint8_t epNum)
+{
+	return (uint16_t)(*pOTG_FS_DOEPINT(epNum) & *pOTG_FS_DOEPMSK);
+}
+
+uint16_t readInEpIntrStatus(uint8_t epNum)
+{
+	//get TXFE bit for DIEPINT, use tmp due to 7th bit always = 0, if use register it will never change
+	uint32_t tmp = *pOTG_FS_DIEPMSK | (((*pOTG_FS_DIEPEMPMSK >> epNum) & 0x01) << TXFE); 	
+	return (uint16_t)(tmp &= *pOTG_FS_DIEPINT(epNum));
+}
+
+
 void usbInterruptHandler(void)
 {
 
 // handler for usb suspend, reset enumdone, read, get descriptor, transfer data into FIFO, IN done, OUT done
 
 
-	uint32_t regVal = ((*pOTG_FS_GINTSTS) & (*pOTG_FS_GINTMSK));
+	uint32_t matchedGlobalIntr = ((*pOTG_FS_GINTSTS) & (*pOTG_FS_GINTMSK));
 
 
 	//check mismatch interrupt
-	if(((regVal >> MMIS) & 1) == 1)
+	if(((matchedGlobalIntr >> MMIS) & 1) == 1)
 	{
 		//clear mismode interrupt bit
 		*pOTG_FS_GINTSTS |= (1 << MMIS);
@@ -1058,14 +1247,14 @@ void usbInterruptHandler(void)
 
 
 	//receive data from host
-	if(((regVal >> RXFLVL) & 1) == 1)
+	if(((matchedGlobalIntr >> RXFLVL) & 1) == 1)
 	{
 
 
-
+		uint32_t popRegister = *pOTG_FS_GRXSTSP;
 		//read GRXSTP check kind of received data is data package or setup package
 		*pOTG_FS_GINTMSK &= ~(1 << RXFLVLM);
-		if(((*pOTG_FS_GRXSTSP >> PKTSTS) & 7) == SETUP_PKG_RECEIVED) //if use *pOTG_FS_GRXSTSR in here,
+		if(((popRegister >> PKTSTS) & 7) == SETUP_PKG_RECEIVED) //if use *pOTG_FS_GRXSTSR in here,
 																	 //data will be one byte right shifted
 																	 //not in 0x00 address anymore
 		{
@@ -1073,9 +1262,8 @@ void usbInterruptHandler(void)
 
 			USB_ReadPacket();
 			
-			if((usbReceivedData[0] ==  0x01000680) )
+			if((epReceivedData[0] ==  0x02000680) && (epReceivedData[1] == 0x430000))
 			{
-			//	checkProblemEMPMSK = 1;
 				startStoreOder = 1;
 			}
 
@@ -1103,12 +1291,14 @@ void usbInterruptHandler(void)
 
 
 
-	if(((regVal >> OEPINT) & 1) == 1)
+	if(((matchedGlobalIntr >> OEPINT) & 1) == 1)
 	{
-		uint32_t epIntr = *pOTG_FS_DAINT;
-		while((epIntr & 0x10000))
+		uint8_t epNum = 0;
+		uint16_t matchedOutEpIntr = (*pOTG_FS_DAINT & *pOTG_FS_DAINTMSK) >> 16;
+		while(matchedOutEpIntr)
 		{
-			if((*pOTG_FS_DOEPINTx >> XFRC) & 0x01)
+			uint16_t outEpIntr = readOutEpIntrStatus(epNum);
+			if((outEpIntr >> XFRC) & 0x01)
 			{
 				if(startStoreOder > 0)
 							{
@@ -1119,10 +1309,10 @@ void usbInterruptHandler(void)
 									indexCheckOderRun = LIMIT_1;
 								}
 							}
-				(*pOTG_FS_DOEPINTx |= (1 << XFRC));
+				(*pOTG_FS_DOEPINT(epNum) |= (1 << XFRC));
 				epOutComplete(0);
 			}
-			if((*pOTG_FS_DOEPINTx >> EPDISD) & 0x01)
+			if((outEpIntr >> EPDISD) & 0x01)
 			{
 				if(startStoreOder > 0)
 							{
@@ -1133,9 +1323,9 @@ void usbInterruptHandler(void)
 									indexCheckOderRun = LIMIT_1;
 								}
 							}
-				(*pOTG_FS_DOEPINTx |= (1 << EPDISD));
+				(*pOTG_FS_DOEPINT(epNum) |= (1 << EPDISD));
 			}
-			if((*pOTG_FS_DOEPINTx >> STUP) & 0x01)
+			if((outEpIntr >> STUP) & 0x01)
 			{
 
 				if(startStoreOder > 0)
@@ -1149,12 +1339,12 @@ void usbInterruptHandler(void)
 							}
 				
 				//clear STUP interrupt bit
-				(*pOTG_FS_DOEPINTx |= (1 << STUP));
+				(*pOTG_FS_DOEPINT(epNum) |= (1 << STUP));
 
 				//extract the received packet
-				extractSetupPacket(usbReceivedData);
+				extractSetupPacket(epReceivedData);
 			}
-			if((*pOTG_FS_DOEPINTx >> STSPHSRX) & 0x01)
+			if((outEpIntr >> STSPHSRX) & 0x01)
 			{
 				if(startStoreOder > 0)
 							{
@@ -1165,9 +1355,9 @@ void usbInterruptHandler(void)
 									indexCheckOderRun = LIMIT_1;
 								}
 							}
-				(*pOTG_FS_DOEPINTx |= (1 << STSPHSRX));
+				(*pOTG_FS_DOEPINT(epNum) |= (1 << STSPHSRX));
 			}
-			if((*pOTG_FS_DOEPINTx >> NAK) & 0x01)
+			if((outEpIntr >> NAK) & 0x01)
 			{
 				if(startStoreOder > 0)
 							{
@@ -1178,20 +1368,23 @@ void usbInterruptHandler(void)
 									indexCheckOderRun = LIMIT_1;
 								}
 							}
-				(*pOTG_FS_DOEPINTx |= (1 << NAK));
+				(*pOTG_FS_DOEPINT(epNum) |= (1 << NAK));
 			}
-
-			epIntr >>= 1;
+			
+			epNum ++;
+			matchedOutEpIntr >>= 1;
 		}
 
 	}
 	
-	if(((regVal >> IEPINT) & 0x01) == 1)
+	if(((matchedGlobalIntr >> IEPINT) & 0x01) == 1)
 	{
-		uint32_t epIntr = *pOTG_FS_DAINT;
-		while((epIntr & 0x1))
+		uint8_t epNum = 0;
+		uint16_t matchedInEpIntr = ((*pOTG_FS_DAINT & *pOTG_FS_DAINTMSK) & 0xFFFFFF);
+		while(matchedInEpIntr)
 		{	
-			if((*pOTG_FS_DIEPINTx >> XFRC) & 0x01)
+			uint16_t inEpIntr = readInEpIntrStatus(epNum);
+			if((inEpIntr >> XFRC) & 0x01)
 			{
 				if(startStoreOder > 0)
 							{
@@ -1203,12 +1396,12 @@ void usbInterruptHandler(void)
 								}
 							}
 				//clear XFRC flag
-				(*pOTG_FS_DIEPINTx |= (1 << XFRC));
-				dataInStageCallback(usbReceivedData);
+				(*pOTG_FS_DIEPINT(epNum) |= (1 << XFRC));
+				dataInStageCallback(epReceivedData);
 				//*pOTG_FS_DIEPEMPMSK &= ~(1 << 0); //this line for case: INEPTXFEM bit is enable when TXFE disable this bit but,
 												  //this func enable it again
 			}
-			if((*pOTG_FS_DIEPINTx >> TOC) & 0x01)
+			if((inEpIntr >> TOC) & 0x01)
 			{
 				if(startStoreOder > 0)
 							{
@@ -1219,9 +1412,9 @@ void usbInterruptHandler(void)
 									indexCheckOderRun = LIMIT_1;
 								}
 							}
-				(*pOTG_FS_DIEPINTx |= (1 << TOC));
+				(*pOTG_FS_DIEPINT(epNum) |= (1 << TOC));
 			}
-			if((*pOTG_FS_DIEPINTx >> EPDISD) & 0x01)
+			if((inEpIntr >> EPDISD) & 0x01)
 			{
 				if(startStoreOder > 0)
 							{
@@ -1232,34 +1425,32 @@ void usbInterruptHandler(void)
 									indexCheckOderRun = LIMIT_1;
 								}
 							}
-				(*pOTG_FS_DIEPINTx |= (1 << EPDISD));
+				(*pOTG_FS_DIEPINT(epNum) |= (1 << EPDISD));
 			}
 		
-			if((*pOTG_FS_DIEPINTx >> TXFE) & 0x01)
+			if((inEpIntr >> TXFE) & 0x01)
 			{
-				if((*pOTG_FS_DIEPEMPMSK & 0x01) == 1)
-				{
-					if(startStoreOder > 0)
+				if(startStoreOder > 0)
+							{
+								checkOderRun[indexCheckOderRun] = 10;
+								indexCheckOderRun ++;
+								if(indexCheckOderRun >= LIMIT)
 								{
-									checkOderRun[indexCheckOderRun] = 10;
-									indexCheckOderRun ++;
-									if(indexCheckOderRun >= LIMIT)
-									{
-										indexCheckOderRun = LIMIT_1;
-									}
+									indexCheckOderRun = LIMIT_1;
 								}
+							}
 
-					//write to fifo
-					writeEmpFifo((uint8_t*)Descriptor, remainLengthEp0);
-				}
+				//write to fifo
+				writeEmpFifo((uint8_t**)(&Descriptor), xferInLen);//use "&" to udpate pos for next transfer (if yes)
 			}
-
-			epIntr >>= 1;
+			
+			epNum ++;
+			matchedInEpIntr >>= 1;
 		}
 
 	}
 
-	if(((regVal >> USBSUSP) & 1) == 1)
+	if(((matchedGlobalIntr >> USBSUSP) & 1) == 1)
 	{
 		//set status suspend (when program based register, we dont care?), stop USB PHY clock source (gate clock register)
 
@@ -1279,7 +1470,7 @@ void usbInterruptHandler(void)
 
 
 #if 0
-	if(((regVal >> IISOIXFR) & 1) == 1)
+	if(((matchedGlobalIntr >> IISOIXFR) & 1) == 1)
 	{
 		if(indexCheckOderRun < 20)
 		{
@@ -1288,7 +1479,7 @@ void usbInterruptHandler(void)
 		}
 		*pOTG_FS_GINTSTS |= (1 << IISOIXFR);
 	}
-	if(((regVal >> IPXFR_DEVICE_MOD) & 1) == 1)
+	if(((matchedGlobalIntr >> IPXFR_DEVICE_MOD) & 1) == 1)
 	{
 		if(indexCheckOderRun < 20)
 		{
@@ -1299,7 +1490,7 @@ void usbInterruptHandler(void)
 	}
 #endif //if0
 	
-	if(((regVal >> WUI) & 1) == 1)
+	if(((matchedGlobalIntr >> WUI) & 1) == 1)
 	{
 		if(startStoreOder > 0)
 					{
@@ -1314,7 +1505,7 @@ void usbInterruptHandler(void)
 	}
 
 
-	if(((regVal >> USBRST) & 1) == 1)
+	if(((matchedGlobalIntr >> USBRST) & 1) == 1)
 	{
 		//call reset USB function
 
@@ -1334,7 +1525,7 @@ void usbInterruptHandler(void)
 
 	}
 	//due to scenario : suspend -> reset -> enumdne ...
-	if(((regVal >> ENUMDNE) & 1) == 1)
+	if(((matchedGlobalIntr >> ENUMDNE) & 1) == 1)
 	{
 		
 		if(startStoreOder > 0)
@@ -1350,7 +1541,7 @@ void usbInterruptHandler(void)
 		uint8_t speed = usbGetSpeed();
 		//uint8_t sysclk;
 		//hclk (differ with sysclk) = 48MHZ, check  SystemCoreClock from SystemClock_config in main or get by HAL_RCC_GetHCLKFreq()
-		usbSetTRDTValue(HAL_RCC_GetHCLKFreq(),speed);
+		usbSetTRDTValue(HAL_RCC_GetHCLKFreq(), speed);
 		
 		//reset when enumdone
 		enumdoneResetCallback();
