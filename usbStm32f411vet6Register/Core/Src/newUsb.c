@@ -53,6 +53,26 @@ __PACKED_STRUCT T_UINT32_READ_DATA{uint32_t v;};
 #define __UNALIGNED_32_READ_DATA(addr)  (((const struct T_UINT32_READ_DATA*)(const void*)addr)->v)
 #endif
 
+
+
+//#ifndef   __UNALIGNED_UINT32_WRITE
+//  #pragma GCC diagnostic push
+//  #pragma GCC diagnostic ignored "-Wpacked"
+//  #pragma GCC diagnostic ignored "-Wattributes"
+//  __PACKED_STRUCT T_UINT32_WRITE { uint32_t v; };
+//  #pragma GCC diagnostic pop
+//  #define __UNALIGNED_UINT32_WRITE(addr, val)    (void)((((struct T_UINT32_WRITE *)(void *)(addr))->v) = (val))
+//#endif
+
+
+typedef struct T32
+{
+	uint32_t v;
+}__attribute__((packed, aligned(1))) T32; //when use align for struct or member struct just increase size, so must use "packed" together
+
+
+
+
 uint8_t DeviceDescriptor[18] __attribute__((aligned(4))) =
 {
 	0x12, //length = 18 bytes
@@ -186,10 +206,35 @@ __ALIGN_BEGIN static uint8_t USBD_CDC_CfgDesc[USB_CDC_CONFIG_DESC_SIZ] __ALIGN_E
 
 
 
-volatile uint8_t totalLengthEp0 = 0;
-volatile uint8_t remainLengthEp0 = 0;
+//request from host --> should be use a struct
+uint8_t bmRequestType;
+uint8_t bRequest;
+uint16_t wValue;
+uint16_t wIndex;
+uint16_t wLength;
+
+
+uint32_t epReceivedData[12] = {0};
+
+volatile uint8_t totalLengthEp0In = 0;
+volatile uint8_t totalLengthEp0Out = 0;
+volatile uint8_t remainLengthEp0In = 0;
+volatile uint8_t remainLengthEp0Out = 0;
+
+
 uint8_t xferInLen = 0;
 uint8_t xferOutLen = 0;
+
+uint8_t *xferBuffIn = NULL;
+uint8_t *xferBuffOut = NULL;
+
+
+uint32_t data[CDC_DATA_FS_OUT_PACKET_SIZE/4]={0}; //for word alignment
+uint8_t cmdLength;
+uint8_t cmdOpCode;  //.stack
+
+
+uint8_t setAddressSuccess = 0;
 
 uint8_t UserTxBuff[Tx_BUFFER_SIZE];
 uint8_t UserRxBuff[Rx_BUFFER_SIZE];
@@ -214,7 +259,8 @@ struct epStatus
 	uint8_t In;
 	uint8_t Out;
 	uint8_t Stall;
-	uint8_t type;
+	uint8_t Type;
+	uint8_t State;
 };
 
 struct epStatus epStt = 
@@ -222,7 +268,8 @@ struct epStatus epStt =
 	.In = 0,   //"." mean init not follow order of struct member, in this case it's yes/no is still ok
 	.Out = 0,
 	.Stall = 0,
-	.type = 0,
+	.Type = 0,
+	.State = 0,
 };
 
 
@@ -422,14 +469,30 @@ void startDev(void)
 
 
 
-uint32_t epReceivedData[12] = {0};
-void USB_ReadPacket(void)
+void USB_ReadPacket(uint8_t *pData, uint8_t length)
 {
 	//read 8 byte, it is request device description package from host
-	for(int i = 0; i < 2; i++)
+
+	uint8_t count32Byte = (uint32_t)length >> 2;  //alignment, may be use >> 2
+	uint8_t remainByte = length % 4; //maybe use len - count32Byte* 4 (depend on instruction is generated)
+
+	if(remainByte != 0)
 	{
-		epReceivedData[i] = *(uint32_t*)(OTG_FS_BASE_ADDR + OTG_FIFO_BASE);
+		count32Byte += 1;
 	}
+
+	for(int i = 0; i < count32Byte; i++)
+	{
+		((T32*)(void*)pData)->v = *(uint32_t*)(OTG_FS_BASE_ADDR + OTG_FIFO_BASE);
+		pData += 4;
+		//__UNALIGNED_UINT32_WRITE(epReceivedData, *(uint32_t*)(OTG_FS_BASE_ADDR + OTG_FIFO_BASE));
+	}
+
+#ifdef SHIFT_PDATA
+	pData -= (4 - remainByte);
+#endif
+
+	//__UNALIGNED_UINT32_WRITE
 
 }
 
@@ -446,13 +509,13 @@ void *getFsConfigurationDesc(uint8_t *lenDes)
 	return (void*)USBD_CDC_CfgDesc;
 }
 
-uint8_t ep0SendData(uint8_t *pBuff, uint8_t epAddr, uint8_t *lengthData)
+uint8_t ep0SendData(uint8_t *pBuff, uint8_t epAddr, uint8_t lengthData)
 {
 
 	if(epStt.In == 1)
 	{
 
-		if(*lengthData == 0)
+		if(lengthData == 0)
 		{
 			*pOTG_FS_DIEPTSIZ0 &= ~(0x3FF << PKTCNT);
 			*pOTG_FS_DIEPTSIZ0 &= ~(0x7FFFF << XFRSIZ);
@@ -460,11 +523,11 @@ uint8_t ep0SendData(uint8_t *pBuff, uint8_t epAddr, uint8_t *lengthData)
 			*pOTG_FS_DIEPTSIZ0 |= ((0x3FF << PKTCNT) & (1 << PKTCNT));
 		}
 
-		if(*lengthData > MAX_PACKET_SIZE_EP0)
+		if(lengthData > MAX_PACKET_SIZE_EP0)
 		{
-			*lengthData = MAX_PACKET_SIZE_EP0;
+			lengthData = MAX_PACKET_SIZE_EP0;
 		}
-		if(*lengthData != 0)
+		if(lengthData != 0)
 		{
 
 
@@ -473,7 +536,7 @@ uint8_t ep0SendData(uint8_t *pBuff, uint8_t epAddr, uint8_t *lengthData)
 
 			*pOTG_FS_DIEPTSIZ0 |= ((0x3FF << PKTCNT) & (1 << PKTCNT));
 
-			*pOTG_FS_DIEPTSIZ0 |= (*lengthData << XFRSIZ);
+			*pOTG_FS_DIEPTSIZ0 |= (lengthData << XFRSIZ);
 		}
 
 
@@ -481,17 +544,20 @@ uint8_t ep0SendData(uint8_t *pBuff, uint8_t epAddr, uint8_t *lengthData)
 		*pOTG_FS_DIEPCTL(0) |= ((1 << CNAK) | (1 << EPENA)); //respond DATA is send  (show packet in wireshark)
 
 		//enable Tx empty fifo interrupt
-		if(*lengthData > 0)
+		if(lengthData > 0)
 		{
 			//for enum 0
 			*pOTG_FS_DIEPEMPMSK |= (1 << 0);
 		}
+		
+		//update remaining data length
+		xferInLen = lengthData; 
 	}
 	else
 	{
-		if(*lengthData > 0) //due to if it have data need to transfer, ep will sent 64byte for each transfer 
+		if(lengthData > 0) //due to if it have data need to transfer, ep will sent 64byte for each transfer 
 		{
-			*lengthData = MAX_PACKET_SIZE_EP0;
+			lengthData = MAX_PACKET_SIZE_EP0;
 		}
 		//if(lenRequired != 0)
 		//{
@@ -500,12 +566,14 @@ uint8_t ep0SendData(uint8_t *pBuff, uint8_t epAddr, uint8_t *lengthData)
 
 			*pOTG_FS_DOEPTSIZ0 |= ((0x3FF << PKTCNT) & (1 << PKTCNT));
 
-			*pOTG_FS_DOEPTSIZ0 |= (*lengthData << XFRSIZ);
+			*pOTG_FS_DOEPTSIZ0 |= (lengthData << XFRSIZ);
 			
 			//enable EP (start transmit)
 			*pOTG_FS_DOEPCTL(0) |= ((1 << CNAK) | (1 << EPENA));
 
 		//}
+
+		xferOutLen = lengthData;
 	}
 
 	return 0;
@@ -513,30 +581,30 @@ uint8_t ep0SendData(uint8_t *pBuff, uint8_t epAddr, uint8_t *lengthData)
 
 
 
-uint8_t epXSendData(uint8_t* pBuff, uint8_t epAddr,  uint8_t *lengthData)
+uint8_t epXSendData(uint8_t* pBuff, uint8_t epAddr,  uint8_t lengthData)
 {
 	if(epStt.In == 1)
 	{
 
-		if(*lengthData == 0)
+		if(lengthData == 0)
 		{
 			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) &= ~(0x3FF << PKTCNT);
 			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) &= ~(0x7FFFF << XFRSIZ);
 
 			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) |= ((0x3FF << PKTCNT) & (1 << PKTCNT));
 		}
-		if(*lengthData > MAX_PACKET_SIZE_EPx)
+		if(lengthData > MAX_PACKET_SIZE_EPx)
 		{
-			*lengthData = MAX_PACKET_SIZE_EPx;
+			lengthData = MAX_PACKET_SIZE_EPx;
 		}
-		if(*lengthData != 0)
+		if(lengthData != 0)
 		{
 
 			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) &= ~(0x3FF << PKTCNT);
 			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) &= ~(0x7FFFF << XFRSIZ);
 
 			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) |= ((0x3FF << PKTCNT) & (1 << PKTCNT));
-			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) |= (*lengthData << XFRSIZ);
+			*pOTG_FS_DIEPTSIZ(epAddr & 0x0f) |= (lengthData << XFRSIZ);
 		}
 
 
@@ -544,17 +612,20 @@ uint8_t epXSendData(uint8_t* pBuff, uint8_t epAddr,  uint8_t *lengthData)
 		*pOTG_FS_DIEPCTL(epAddr & 0x0f) |= ((1 << CNAK) | (1 << EPENA)); //respond DATA is send  (show packet in wireshark)
 
 		//enable Tx empty fifo interrupt
-		if(*lengthData > 0)
+		if(lengthData > 0)
 		{
 			//for enum 0
 			*pOTG_FS_DIEPEMPMSK |= (1 << 0);
 		}
+		
+		//update remaining data length
+		xferInLen = lengthData; 
 	}
 	else
 	{
-		if(*lengthData > MAX_PACKET_SIZE_EPx)
+		if(lengthData > MAX_PACKET_SIZE_EPx)
 		{
-			*lengthData = MAX_PACKET_SIZE_EPx;
+			lengthData = MAX_PACKET_SIZE_EPx;
 		}
 		//if(requiredLength != 0)
 		//{
@@ -562,12 +633,14 @@ uint8_t epXSendData(uint8_t* pBuff, uint8_t epAddr,  uint8_t *lengthData)
 			*pOTG_FS_DOEPTSIZ(epAddr & 0x0f) &= ~(0x7FFFF << XFRSIZ);
 
 			*pOTG_FS_DOEPTSIZ(epAddr & 0x0f) |= ((0x3FF << PKTCNT) & (1 << PKTCNT));
-			*pOTG_FS_DOEPTSIZ(epAddr & 0x0f) |= (*lengthData << XFRSIZ);
+			*pOTG_FS_DOEPTSIZ(epAddr & 0x0f) |= (lengthData << XFRSIZ);
 
 			//enable EP (start transmit)
 			*pOTG_FS_DOEPCTL(epAddr & 0x0f) |= ((1 << CNAK) | (1 << EPENA));
 
 		//}
+
+		xferOutLen = lengthData;
 	}
 
 	return 0;
@@ -575,14 +648,14 @@ uint8_t epXSendData(uint8_t* pBuff, uint8_t epAddr,  uint8_t *lengthData)
 
 
 
-void setAddressEp(uint32_t *setupPacket)
+void setAddressEp(void)
 {
-	uint32_t address = (uint32_t)(setupPacket[0] >> 16);
-	if(((setupPacket[1] >> 16) == 0) && ((setupPacket[1] & 0xffff) == 0) && (address < 128))
+	if((wLength == 0) && (wIndex == 0) && (wValue < 128))
 	{
 		*pOTG_FS_DCFG &= ~(0x7f << DAD);
-		*pOTG_FS_DCFG |= (address << DAD);
+		*pOTG_FS_DCFG |= (wValue << DAD);
 	}
+	setAddressSuccess = 1;
 
 }
 
@@ -654,59 +727,152 @@ void usbdOpenEp(uint8_t epAddress, uint8_t epType, uint8_t epMaxPacketSize)
 	openEp(epAddress, epType, epMaxPacketSize);
 }
 
+
+
+void usbEpSetStall(uint8_t epNum)
+{
+	if(epStt.In == 1)
+	{
+		if((((*pOTG_FS_DIEPCTL(epNum) >> 31) & 0x01) == 0) && (epNum != 0)) //need to modify for all CTL register
+		{
+			*pOTG_FS_DIEPCTL(epNum) |= ~(1 << 30); //this line will clear EPDIS bit (rs bit), mean EPDIS interrupt will be trigger
+		}
+		*pOTG_FS_DIEPCTL(epNum) |= (1 << STALL);
+	}
+	else
+	{
+		if((((*pOTG_FS_DOEPCTL(epNum) >> 31) & 0x01) == 0) && (epNum != 0)) //need to modify for all CTL register
+		{
+			*pOTG_FS_DOEPCTL(epNum) |= ~(1 << 30); //this line will clear EPDIS bit (rs bit), mean EPDIS interrupt will be trigger
+		}
+		*pOTG_FS_DOEPCTL(epNum) |= (1 << STALL);
+	}
+}
+
+
+
+void ep0OutStart(void)
+{
+	//need modify for all DOEPTSIZ register
+	
+	//if(USB_OTG_CORE_ID_300A)
+	//{
+	//
+	//}
+
+
+	*pOTG_FS_DOEPTSIZ0 = 0U;
+	*pOTG_FS_DOEPTSIZ0 |= (1 << PKTCNT);
+	*pOTG_FS_DOEPTSIZ0 |= (3 * 8);
+	*pOTG_FS_DOEPTSIZ0 |= (3 << STUPCNT);
+	
+	//if(dma == 1)
+	//{
+	//
+	//}
+}
+
+
+void stallEp(uint8_t epAddress)
+{
+	if((epAddress & 0x80) == 0x80)
+	{
+		epStt.In = 1;
+		//epNum =
+	}
+	else
+	{
+		epStt.Out = 1;
+		//epNum = 
+	}
+	epStt.Stall = 1;
+
+	usbEpSetStall(epAddress & 0x0f);
+
+	if((epAddress & 0x0f) == 0)
+	{
+		ep0OutStart(); //reset DOEPTSIZ register
+	}
+}
+
+
+
+
 #endif //if 0 move to new file
 
 
 /*usbSend and usbReceive , both are use ep0SendData and epXSendData*/
+
+//this func will rise a DIEP_TXFC interrupt(overall: send data to host will rise this interrupt)
 void usbSend(uint8_t* pBuff, uint8_t epAddr, uint8_t lenData)
 {
 	////epNum != epAddr
-	xferInLen = lenData;
 
+	epStt.State = USBD_EP0_DATA_IN;
 	epStt.In = 1;
 	
 	if((epAddr & 0x0f) == 0)
 	{
-		ep0SendData(NULL, epAddr, &xferInLen);
+		ep0SendData(pBuff, epAddr, lenData);
 
 	}
 	else
 	{
-		if(epStt.type == EP_TYPE_ISOC) // = 0x01
+		if(epStt.Type == EP_TYPE_ISOC) // = 0x01
 		{	
-			epXSendData(pBuff, epAddr, &xferInLen);//pBuff due to it contain writePacket func for ISOC type 
+			epXSendData(pBuff, epAddr, lenData);//pBuff due to it contain writePacket func for ISOC type 
 		}
 		else
 		{
 			
-			epXSendData(NULL, epAddr, &xferInLen); 
+			epXSendData(pBuff, epAddr, lenData); 
 		}
 	}
 }
 
 
-void usbReceive(uint8_t *pBuff, uint8_t epAddr, uint8_t lenData)
+void usbReceive(uint8_t *pBuff, uint8_t epAddr, uint8_t lenData) //re-check this func, check how to pBuff is passed
 {
 	
-	xferOutLen = lenData;
-	
+	xferBuffOut = pBuff;
+
+
 	epStt.In = 0;	
 	if((epAddr & 0x0f) == 0)
 	{
-		ep0SendData(NULL, epAddr, &xferOutLen);  //<==> EP0StartXfer in HAL library
+		ep0SendData(pBuff, epAddr, lenData);  //<==> EP0StartXfer in HAL library
 	}
 	else
 	{
-		if(epStt.type == EP_TYPE_ISOC) // == 0x01	
+		if(epStt.Type == EP_TYPE_ISOC) // == 0x01	
 		{
-			epXSendData(pBuff, epAddr, &xferOutLen);
+			epXSendData(pBuff, epAddr, lenData);
 		}
 		else
 		{
-			epXSendData(NULL, epAddr, &xferOutLen);
+			epXSendData(pBuff, epAddr, lenData);
 		}
 	}
 	
+}
+
+
+void usbSendStatus(uint8_t* pBuff, uint8_t epAddr, uint8_t lenData)
+{
+	usbSend(pBuff, epAddr, lenData);
+}
+
+
+void usbSendData(uint8_t *pBuff, uint8_t epAddr, uint8_t lenData)
+{
+	usbSend(pBuff, epAddr, remainLengthEp0In);
+}
+
+void usbSendError(void)
+{
+	//set stall bit in IN/OUT endpoint
+	stallEp(0x80);//in ep
+	stallEp(0x00);//out ep
 }
 
 void usbdCdcClassInit(uint8_t speed)
@@ -743,65 +909,76 @@ void usbdCdcClassInit(uint8_t speed)
 	}
 	else if(speed == 3)
 	{
-		//epReceived();
+		usbReceive((uint8_t*)Rx_BUFFER_SIZE, CDC_OUT_EP_ADDR, CDC_DATA_FS_OUT_PACKET_SIZE);
 	}
 
 }
 
 
+uint8_t checkInterruptAfterSetConfig = 0;
 
 void usbdSetClass(uint8_t speed) //parse type usb class
 {
 	usbdCdcClassInit(speed);
+	checkInterruptAfterSetConfig = 1;
 }
 
-uint8_t min(uint8_t len1, uint16_t len2)
+
+void usbdSetConfig(uint16_t configNum, uint8_t speed)
 {
-	return (uint8_t)(len1 < len2 ? len1 : len2);
+	//should check set address is success or not!!!!!
+	if(configNum != 0)
+	{
+		usbdSetClass(speed); //class:cdc or msc or dfu ... and speed param
+		usbSendStatus(NULL, 0x00, 0); //this func will rise a DIEP_TXFC interrupt(overall: send data to host will rise this interrupt)
+	}
+}
+
+uint16_t min(uint16_t len1, uint16_t len2)
+{
+	return (len1 < len2 ? len1 : len2);
 }
 
 
 uint8_t checkProblem = 0;
 
-void stdDev(uint32_t *pSetup)
+void stdDev(void)
 {
-	uint16_t lenFromSetupCommand = (pSetup[1] >> 16);
-	uint8_t bRequest = (pSetup[0] >> 8) & 0xff;
 	uint8_t lenDesc = 0;
 	uint8_t speedEnumDone = (*pOTG_FS_DSTS >> ENUMSPD) & 0x03;		
 
 	switch (bRequest)
 	{
 	case 5:
-		setAddressEp(pSetup);
-		usbSend(NULL, 0x00, 0);
+		setAddressEp();
+		usbSendStatus(NULL, 0x00, 0);
 		break;
 
 	case 6:
-		switch(pSetup[0] >> 24)
+		switch(wValue >> 8)
 		{
 			case 0x01: //get device descriptor
 
 				Descriptor = (void*)getFSDeviceDescriptor(&lenDesc);
-				remainLengthEp0 = min(lenDesc, lenFromSetupCommand);
-				totalLengthEp0 = remainLengthEp0;
 
-				usbSend(NULL, 0x80, remainLengthEp0);
+				remainLengthEp0In = (uint8_t)min(lenDesc, wLength);
+				totalLengthEp0In = lenDesc;
+				
+				usbSendData(NULL, 0x80, lenDesc);
 				break;
 
 			case 0x02: //get config
 
-				epStt.In = 1;
 				//we must create function to change maxpacketsize between HS and FS, check HAL code
 				//but now we can skip it due to value default in config des is for FS
 
 				//attention due to size of config desc is larger 64 byte
 				
 				Descriptor = (void*)getFsConfigurationDesc(&lenDesc);
-				remainLengthEp0 = min(lenDesc, lenFromSetupCommand);
-				totalLengthEp0 = remainLengthEp0;
-				
-				usbSend(NULL, 0x80, remainLengthEp0);
+				remainLengthEp0In = (uint8_t)min(lenDesc, wLength);
+				totalLengthEp0In = lenDesc;
+
+				usbSendData(NULL, 0x80, lenDesc);
 				break;
 
 			case 0x06: //get device_qualifer (for device support both HS and FS speed)
@@ -811,7 +988,7 @@ void stdDev(uint32_t *pSetup)
 				}
 				else if(speedEnumDone == 0x03) //full speed
 				{
-					usbSend(NULL, 0x80, 0); //no send data to avoid waiting from host.
+					usbSendStatus(NULL, 0x80, 0); //no send data to avoid waiting from host.
 				}
 				break;
 
@@ -822,34 +999,227 @@ void stdDev(uint32_t *pSetup)
 		break;
 
 	case 0x09: //set config
-		usbdSetClass(speedEnumDone); //class:cdc or msc or dfu ... and speed param
+		usbdSetConfig(wValue, speedEnumDone);
 		break;
 	default:
 		break;
 	}
 }
 
+
+
+
+uint8_t usbdCoreFindIF(uint8_t requireIndex)
+{
+#ifdef USBD_USED_COMPOSITE
+	//We do not use usb composite in this case so, do nothing in this #preprocess
+	
+#else
+
+	return 0;
+
+#endif
+}
+
+
+
+uint8_t usbdCoreFindEP(uint8_t requireIndex)
+{
+#ifdef USBD_USED_COMPOSITE
+	//We do not use usb composite in this case so, do nothing in this #preprocess
+	
+#else
+
+	return 0;
+
+#endif
+}
+
+
+
+void cdcClassControl(uint8_t cmdOpCode, uint8_t* pBuff, uint8_t length)
+{
+switch(cmdOpCode)
+	{
+	case CDC_SEND_ENCAPSULATED_COMMAND:
+
+		break;
+
+	case CDC_GET_ENCAPSULATED_RESPONSE:
+
+		break;
+
+	case CDC_SET_COMM_FEATURE:
+
+		break;
+
+	case CDC_GET_COMM_FEATURE:
+
+		break;
+
+	case CDC_CLEAR_COMM_FEATURE:
+
+		break;
+
+	/*******************************************************************************/
+	/* Line Coding Structure                                                       */
+	/*-----------------------------------------------------------------------------*/
+	/* Offset | Field       | Size | Value  | Description                          */
+	/* 0      | dwDTERate   |   4  | Number |Data terminal rate, in bits per second*/
+	/* 4      | bCharFormat |   1  | Number | Stop bits                            */
+	/*                                        0 - 1 Stop bit                       */
+	/*                                        1 - 1.5 Stop bits                    */
+	/*                                        2 - 2 Stop bits                      */
+	/* 5      | bParityType |  1   | Number | Parity                               */
+	/*                                        0 - None                             */
+	/*                                        1 - Odd                              */
+	/*                                        2 - Even                             */
+	/*                                        3 - Mark                             */
+	/*                                        4 - Space                            */
+	/* 6      | bDataBits  |   1   | Number Data bits (5, 6, 7, 8 or 16).          */
+	/*******************************************************************************/
+	case CDC_SET_LINE_CODING:
+
+		break;
+
+	case CDC_GET_LINE_CODING:
+
+		break;
+
+	case CDC_SET_CONTROL_LINE_STATE:
+
+		break;
+
+	case CDC_SEND_BREAK:
+
+		break;
+
+	default:
+		break;
+	}	
+}
+
+
+void usbdPrepairRx(uint32_t *pBuff, uint8_t len)
+{
+	epStt.State = USBD_EP0_DATA_OUT;
+	totalLengthEp0Out = len;
+	remainLengthEp0Out = len; //if USBD_AVOID_PACKET_SPLIT_MPS is not used
+	usbReceive((uint8_t*)pBuff, 0, len);  //pBuff is used for DMA, or ISO mode
+}
+
+void cdcClassSetup(void)
+{
+
+	uint8_t len;
+	switch(bmRequestType & bm_REQUEST_TYPE_MASK)
+	{
+		case bm_REQUEST_TYPE_CLASS:
+			if((bmRequestType & 0x80) == (DEVICE_TO_HOST)) //prepair for send or receive data from host, in this case is received data
+			{
+				cdcClassControl(cmdOpCode, (uint8_t*)data, cmdLength);
+				
+				len = min(CDC_REQ_MAX_DATA_SIZE, wLength);
+				usbSendData((uint8_t*)data, 0x80, len); //endpoint 0?????
+			}
+			else
+			{
+				cmdOpCode = bRequest;
+				cmdLength = (uint8_t)min(wLength, MAX_PACKET_SIZE_EP0);
+				
+				//prepairRx
+				usbdPrepairRx(data, cmdLength);
+			}
+			break;
+
+		case bm_REQUEST_TYPE_STANDARD:
+			break;
+
+		default:
+			usbSendError();
+			break;
+	}
+}
+
+
+
+
+void stdIF(void)
+{
+
+	uint8_t indexInterface = 0;
+	switch(bmRequestType & bm_REQUEST_TYPE_MASK)
+	{
+		case bm_REQUEST_TYPE_STANDARD:
+		case bm_REQUEST_TYPE_CLASS:
+		case bm_REQUEST_TYPE_VENDOR:
+			if(setAddressSuccess)
+			{
+				if((wIndex & 0xff) <= USBD_MAX_NUM_INTERFACES)  // <  1
+				{
+
+#ifdef USBD_USED_COMPOSITE	
+indexInterface = usbdCoreFindIF(wIndex); //due to not use USBD_USED_COMPOSITE so indexInterface = 0;
+#endif			
+			
+					if((indexInterface != 0xff) && (indexInterface < USBD_MAX_SUPPORTED_CLASS))
+					{
+						//setup for CDC class
+						cdcClassSetup();
+					
+					}
+					if(wLength == 0)
+					{
+						usbSendStatus(NULL, 0, 0); //send status
+					}
+				}
+				else
+				{
+					//send error for both IN and OUT endpoint
+					usbSendError();
+					
+				}
+			}
+
+			break;
+
+		default:
+			break;
+	}	
+		
+}
+
+
 void extractSetupPacket(uint32_t *pSetup)
 {
-	uint8_t bmRequestType = pSetup[0] & 0xff;
+	bmRequestType = pSetup[0] & 0xff;
+	bRequest = (pSetup[0] >> 8) & 0xff;
+	wIndex = pSetup[1] & 0xFFFF;
+	wValue = pSetup[0] >> 16;
+	wLength = pSetup[1] >> 16;
+
 	//if(bmRequestType == 0x80)//get phase transfer direction
 	//{
-		switch ((bmRequestType >> 5) & 0x03) //get Type
-		{
-		case 0:
+
+		//switch ((bmRequestType >> 5) & 0x03) //get Type
+		//{
+		//case 0:
 			switch(bmRequestType & 0x1f)     //get Recepient
 			{
 			case 0:
-				stdDev(pSetup);
+				stdDev();
+				break;
+			case 1:
+				stdIF();
 				break;
 			default:
 				break;
 			}
-			break;
-		default:
-			break;
+		//	break;
+		//default:
+		//	break;
 
-		}
+		//}
 	//}
 	//else
 	//{
@@ -914,72 +1284,6 @@ static void  writeEmpFifo(uint8_t **data, uint8_t len)
 }
 
 
-void usbEpSetStall(uint8_t epNum)
-{
-	if(epStt.In == 1)
-	{
-		if((((*pOTG_FS_DIEPCTL(epNum) >> 31) & 0x01) == 0) && (epNum != 0)) //need to modify for all CTL register
-		{
-			*pOTG_FS_DIEPCTL(epNum) |= ~(1 << 30); //this line will clear EPDIS bit (rs bit), mean EPDIS interrupt will be trigger
-		}
-		*pOTG_FS_DIEPCTL(epNum) |= (1 << STALL);
-	}
-	else
-	{
-		if((((*pOTG_FS_DOEPCTL(epNum) >> 31) & 0x01) == 0) && (epNum != 0)) //need to modify for all CTL register
-		{
-			*pOTG_FS_DOEPCTL(epNum) |= ~(1 << 30); //this line will clear EPDIS bit (rs bit), mean EPDIS interrupt will be trigger
-		}
-		*pOTG_FS_DOEPCTL(epNum) |= (1 << STALL);
-	}
-}
-
-
-
-void ep0OutStart(void)
-{
-	//need modify for all DOEPTSIZ register
-	
-	//if(USB_OTG_CORE_ID_300A)
-	//{
-	//
-	//}
-
-
-	*pOTG_FS_DOEPTSIZ0 = 0U;
-	*pOTG_FS_DOEPTSIZ0 |= (1 << PKTCNT);
-	*pOTG_FS_DOEPTSIZ0 |= (3 * 8);
-	*pOTG_FS_DOEPTSIZ0 |= (3 << STUPCNT);
-	
-	//if(dma == 1)
-	//{
-	//
-	//}
-}
-
-
-void stallEP(uint8_t epAddress)
-{
-	if((epAddress & 0x80) == 0x80)
-	{
-		epStt.In = 1;
-		//epNum =
-	}
-	else
-	{
-		epStt.Out = 1;
-		//epNum = 
-	}
-	epStt.Stall = 1;
-
-	usbEpSetStall(epAddress & 0x0f);
-
-	if((epAddress & 0x0f) == 0)
-	{
-		ep0OutStart(); //reset DOEPTSIZ register
-	}
-}
-
 
 //void prepairReceive()
 //{
@@ -990,8 +1294,7 @@ void stallEP(uint8_t epAddress)
 uint8_t timeWrite = 0;
 
 
-
-void dataInStageCallback(uint32_t *pSetup)///need to add epNum param
+void dataInStageCallback(void)///need to add epNum param
 {
 	
 	if(1)//if enum == 0, change if condition for overall
@@ -999,15 +1302,15 @@ void dataInStageCallback(uint32_t *pSetup)///need to add epNum param
 		if(1) //check status: USBD_EP0_DATA_IN, please complete the code for the overview
 		{
 
-			if(remainLengthEp0 > MAX_PACKET_SIZE_EP0)
+			if(remainLengthEp0In > MAX_PACKET_SIZE_EP0)
 			{
-				remainLengthEp0 -= MAX_PACKET_SIZE_EP0;
-				usbSend(NULL, 0x80, remainLengthEp0);
+				remainLengthEp0In -= MAX_PACKET_SIZE_EP0;
+				usbSendData(NULL, 0x80, remainLengthEp0In);
 				usbReceive(NULL, 0x80, 0);
 			}
 			else
 			{
-				stallEP(0x80);
+				stallEp(0x80);
 				usbReceive(NULL, 0x80, 0);
 			}
 		}
@@ -1016,16 +1319,91 @@ void dataInStageCallback(uint32_t *pSetup)///need to add epNum param
 
 
 
-void epOutComplete(uint8_t eNum)
+void ep0Ready(void)
+{
+	//cmdOpCode = 0xFF;
+	if(cmdOpCode != 0xFF)
+	{
+		cdcClassControl(cmdOpCode, (uint8_t*)data, cmdLength);
+		cmdOpCode = 0xFF;
+	}
+}
+
+
+void usbdContinousRx(uint8_t*pBuff, uint8_t length)
+{
+
+}
+
+void dataOutStage(uint8_t* pBuff, uint8_t epNum)
+{
+	uint8_t index = 0;
+	if(epNum == 0)
+	{
+		if(epStt.State == USBD_EP0_DATA_OUT)
+		{
+			if(remainLengthEp0Out > MAX_PACKET_SIZE_EP0)
+			{
+				remainLengthEp0Out -= MAX_PACKET_SIZE_EP0;
+				usbdContinousRx(pBuff, min(remainLengthEp0Out, MAX_PACKET_SIZE_EP0));
+			}
+			else
+			{
+				//Find class relative current request
+				switch(bmRequestType & 0x1F)
+				{
+					case REQUEST_RECEPIENT_DEVICE:
+						index = 0;
+						break;
+
+					case REQUEST_RECEPIENT_INTERFACE:
+						index = usbdCoreFindIF(wIndex);					
+						break;
+
+					case REQUEST_RECEPIENT_ENDPOINT:
+						index = usbdCoreFindEP(wIndex);					
+						break;
+					
+					default:
+						index = 0;
+				}
+
+				if(index <= USBD_MAX_SUPPORTED_CLASS)
+				{
+					if(1) //check cocnfigured state?
+					{
+						//if(cmdOpCode != 0xFF)
+						ep0Ready();//set cmdOpCode == 0xff	
+					}
+					
+					//send status
+					usbSendStatus(NULL, 0, 0);
+				}
+			}
+		}
+	}
+	else
+	{
+		//temporary for planting (tam thoi de trong)
+	}
+}
+
+void epOutComplete(uint8_t epNum)
 {
 	//if(dma == 1)
 	//{
 	//
 	//}
 	
-	ep0OutStart();
+	if((epNum == 0) && (xferOutLen == 0))  //consider ep 0 and 1 using same xferOutLen
+	{
+		ep0OutStart();
+	}
 
-	//dataOutStage() // in setup phase this function can be ignored
+	// in setup phase this function can be ignored
+	//but when SET LINE CODING it be will active due to ep_state change to USBD_EP0_DATA_OUT
+	
+	dataOutStage((uint8_t*)epReceivedData, epNum);
 }
 
 
@@ -1236,7 +1614,6 @@ void usbInterruptHandler(void)
 
 	uint32_t matchedGlobalIntr = ((*pOTG_FS_GINTSTS) & (*pOTG_FS_GINTMSK));
 
-
 	//check mismatch interrupt
 	if(((matchedGlobalIntr >> MMIS) & 1) == 1)
 	{
@@ -1254,15 +1631,35 @@ void usbInterruptHandler(void)
 		uint32_t popRegister = *pOTG_FS_GRXSTSP;
 		//read GRXSTP check kind of received data is data package or setup package
 		*pOTG_FS_GINTMSK &= ~(1 << RXFLVLM);
-		if(((popRegister >> PKTSTS) & 7) == SETUP_PKG_RECEIVED) //if use *pOTG_FS_GRXSTSR in here,
+		if(((popRegister >> PKTSTS) & 7) == 0x02)
+		{
+			if(startStoreOder > 0)
+						{
+							checkOderRun[indexCheckOderRun] = 15;
+							indexCheckOderRun ++;
+							if(indexCheckOderRun >= LIMIT)
+							{
+								indexCheckOderRun = LIMIT_1;
+							}
+						}
+
+			uint8_t byteCount = (popRegister >> BCNT) & 0x7FF;
+			if(byteCount != 0)
+			{
+				USB_ReadPacket((uint8_t*)epReceivedData, byteCount);
+			}
+		}
+
+		else if(((popRegister >> PKTSTS) & 7) == SETUP_PKG_RECEIVED) //if use *pOTG_FS_GRXSTSR in here,
 																	 //data will be one byte right shifted
 																	 //not in 0x00 address anymore
 		{
 
 
-			USB_ReadPacket();
+			USB_ReadPacket((uint8_t*)epReceivedData, 8);
 			
-			if((epReceivedData[0] ==  0x02000680) && (epReceivedData[1] == 0x430000))
+			//if((epReceivedData[0] ==  0x02000680) && (epReceivedData[1] == 0x430000))
+			if((epReceivedData[0] ==  0x2021))
 			{
 				startStoreOder = 1;
 			}
@@ -1308,9 +1705,10 @@ void usbInterruptHandler(void)
 								{
 									indexCheckOderRun = LIMIT_1;
 								}
+
 							}
 				(*pOTG_FS_DOEPINT(epNum) |= (1 << XFRC));
-				epOutComplete(0);
+				epOutComplete(epNum);
 			}
 			if((outEpIntr >> EPDISD) & 0x01)
 			{
@@ -1397,7 +1795,7 @@ void usbInterruptHandler(void)
 							}
 				//clear XFRC flag
 				(*pOTG_FS_DIEPINT(epNum) |= (1 << XFRC));
-				dataInStageCallback(epReceivedData);
+				dataInStageCallback();
 				//*pOTG_FS_DIEPEMPMSK &= ~(1 << 0); //this line for case: INEPTXFEM bit is enable when TXFE disable this bit but,
 												  //this func enable it again
 			}

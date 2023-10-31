@@ -33,6 +33,18 @@
 #define USB_DESC_TYPE_INTERFACE				0x04
 #define USB_DESC_TYPE_ENDPOINT				0x05
 
+
+#define USBD_MAX_NUM_INTERFACES 			0x01
+#define USBD_MAX_SUPPORTED_CLASS 			0x01
+
+#define bm_REQUEST_TYPE_MASK 				0x60
+#define bm_REQUEST_TYPE_CLASS 				0x20
+#define bm_REQUEST_TYPE_STANDARD 			0x00
+#define bm_REQUEST_TYPE_VENDOR  			0x40
+
+#define HOST_TO_DEVICE 						0x00
+#define DEVICE_TO_HOST 						0x80
+
 #ifndef LOBYTE
 #define LOBYTE(x)							((uint8_t)((x) & 0x00FF))
 #endif
@@ -49,23 +61,42 @@
 #define pOTG_FS_DOEPCTL(x) 					((uint32_t*)(OTG_FS_BASE_ADDR + 0xB00 + 0x20*(x)))
 #define pOTG_FS_DOEPTSIZ(x) 				((uint32_t*)(OTG_FS_BASE_ADDR + 0xB10 + 0x20*(x)))
 
+//CDC class
+#define CDC_REQ_MAX_DATA_SIZE 				0x07
 #define CDC_CMD_PACKET_SIZE					0x08
+#define CDC_DATA_FS_IN_PACKET_SIZE 			64
+#define CDC_DATA_FS_OUT_PACKET_SIZE 		64
 #define CDC_DATA_FS_MAX_PACKET_SIZE			64
+
 #define CDC_FS_BINTERVAL					0x10
 #define CDC_CMD_EP							0x82
 #define CDC_OUT_EP							0x01
 #define CDC_IN_EP							0x81
 
+#define CDC_CMD_EP_ADDR 					CDC_CMD_EP
 #define CDC_IN_EP_ADDR 						CDC_IN_EP
 #define CDC_OUT_EP_ADDR 					CDC_OUT_EP
 
 
+//cdc command
+#define CDC_SEND_ENCAPSULATED_COMMAND               0x00U
+#define CDC_GET_ENCAPSULATED_RESPONSE               0x01U
+#define CDC_SET_COMM_FEATURE                        0x02U
+#define CDC_GET_COMM_FEATURE                        0x03U
+#define CDC_CLEAR_COMM_FEATURE                      0x04U
+#define CDC_SET_LINE_CODING                         0x20U
+#define CDC_GET_LINE_CODING                         0x21U
+#define CDC_SET_CONTROL_LINE_STATE                  0x22U
+#define CDC_SEND_BREAK                              0x23U
+
+
+//ep class
+#define USBD_EP0_DATA_OUT 					0x01
+#define USBD_EP0_DATA_IN 					0x02
 #define EP_TYPE_ISOC 						0x01
 #define USBD_EP_TYPE_BULK					0x02
 #define USBD_EP_TYPE_INTR					0x03
-#define CDC_DATA_FS_IN_PACKET_SIZE 			64
-#define CDC_DATA_FS_OUT_PACKET_SIZE 		64
-#define CDC_CMD_EP_ADDR 					CDC_CMD_EP
+
 
 #define Tx_BUFFER_SIZE 						2048
 #define Rx_BUFFER_SIZE 						2048
@@ -73,6 +104,12 @@
 
 #define MAX_PACKET_SIZE_EP0 				64 //64
 #define MAX_PACKET_SIZE_EPx 				64 //64
+
+
+//bmRequetType
+#define REQUEST_RECEPIENT_DEVICE 			0x00
+#define REQUEST_RECEPIENT_INTERFACE 		0x01
+#define REQUEST_RECEPIENT_ENDPOINT 			0x02
 
 
 ///////////////////
@@ -180,6 +217,8 @@
 
 //GRXSTSR
 #define PKTSTS								17
+
+#define BCNT 								0x04
 
 
 

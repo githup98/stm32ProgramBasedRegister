@@ -182,9 +182,21 @@ int main(void)
 		 }
 
 		GPIOD->ODR &= ~(1 << 12);
-		HAL_Delay(1500);
+		HAL_Delay(500);
 		GPIOD->ODR |= (1 << 12);
-		HAL_Delay(1500);
+		HAL_Delay(500);
+		GPIOD->ODR &= ~(1 << 12);
+		HAL_Delay(500);
+		GPIOD->ODR |= (1 << 12);
+		HAL_Delay(500);
+		GPIOD->ODR &= ~(1 << 12);
+		HAL_Delay(500);
+		GPIOD->ODR |= (1 << 12);
+		HAL_Delay(500);
+		GPIOD->ODR &= ~(1 << 12);
+		HAL_Delay(500);
+		GPIOD->ODR |= (1 << 12);
+		HAL_Delay(500);
 	}
 
   }
