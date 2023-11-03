@@ -79,24 +79,29 @@
 
 
 //cdc command
-#define CDC_SEND_ENCAPSULATED_COMMAND               0x00U
-#define CDC_GET_ENCAPSULATED_RESPONSE               0x01U
-#define CDC_SET_COMM_FEATURE                        0x02U
-#define CDC_GET_COMM_FEATURE                        0x03U
-#define CDC_CLEAR_COMM_FEATURE                      0x04U
-#define CDC_SET_LINE_CODING                         0x20U
-#define CDC_GET_LINE_CODING                         0x21U
-#define CDC_SET_CONTROL_LINE_STATE                  0x22U
-#define CDC_SEND_BREAK                              0x23U
+#define CDC_SEND_ENCAPSULATED_COMMAND       0x00
+#define CDC_GET_ENCAPSULATED_RESPONSE       0x01
+#define CDC_SET_COMM_FEATURE                0x02
+#define CDC_GET_COMM_FEATURE                0x03
+#define CDC_CLEAR_COMM_FEATURE              0x04
+#define CDC_SET_LINE_CODING                 0x20
+#define CDC_GET_LINE_CODING                 0x21
+#define CDC_SET_CONTROL_LINE_STATE          0x22
+#define CDC_SEND_BREAK 						0x23
 
 
-//ep class
-#define USBD_EP0_DATA_OUT 					0x01
-#define USBD_EP0_DATA_IN 					0x02
-#define EP_TYPE_ISOC 						0x01
+//ep class state
+#define USBD_EP0_DATA_OUT					0x01
+#define USBD_EP0_DATA_IN					0x02
+#define EP_TYPE_ISOC						0x01
 #define USBD_EP_TYPE_BULK					0x02
 #define USBD_EP_TYPE_INTR					0x03
 
+
+//device state
+#define USBD_DEFAULT_STATE 					0x00
+#define USBD_ADDRESSED_STATE 				0x01
+#define USBD_CONFIGURED_STATE 				0x02
 
 #define Tx_BUFFER_SIZE 						2048
 #define Rx_BUFFER_SIZE 						2048
@@ -114,6 +119,9 @@
 
 ///////////////////
 
+//USBD return
+#define USBD_OK 							0
+#define USBD_FAIL 							1
 
 #define AHB_IDEL_FAIL						1
 #define SOFT_RESET_FAIL						2
@@ -266,7 +274,8 @@
 
 //DIEPCTL
 #define EPENA								31
-#define SD0PID_SEVNFRM						28      //set pid for data0 (in bulk/interrupt mode), set even frame (in isochronous mode)
+#define SODDFRM 							28      //set pid for data0 (in bulk/interrupt mode), set even frame (in isochronous mode)
+#define SD0PID_SEVNFRM						29
 #define TXFNUM								22
 #define EPTYP								18
 #define USBAEP								15
